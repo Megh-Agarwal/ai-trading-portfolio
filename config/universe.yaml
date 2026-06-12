@@ -1,0 +1,33 @@
+benchmark: SPY
+
+tickers:
+  - ticker: XLK
+    sector: Technology
+    name: Technology Select Sector SPDR Fund
+  - ticker: XLF
+    sector: Financials
+    name: Financial Select Sector SPDR Fund
+  - ticker: XLV
+    sector: Health Care
+    name: Health Care Select Sector SPDR Fund
+  - ticker: XLY
+    sector: Consumer Discretionary
+    name: Consumer Discretionary Select Sector SPDR Fund
+  - ticker: XLP
+    sector: Consumer Staples
+    name: Consumer Staples Select Sector SPDR Fund
+  - ticker: XLE
+    sector: Energy
+    name: Energy Select Sector SPDR Fund
+  - ticker: XLI
+    sector: Industrials
+    name: Industrial Select Sector SPDR Fund
+  - ticker: XLB
+    sector: Materials
+    name: Materials Select Sector SPDR Fund
+  - ticker: XLRE
+    sector: Real Estate
+    name: Real Estate Select Sector SPDR Fund
+  - ticker: XLU
+    sector: Utilities
+    name: Utilities Select Sector SPDR Fund

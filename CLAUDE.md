@@ -32,11 +32,32 @@ SQLite ←──────┴────────┴───────�
 - `src/execution/`: Order generation, fill simulation, transaction costs, state management.
 - `src/backtest/`: Walk-forward backtest engine (added in Milestone 5).
 - `src/eval/`: Metrics, attribution, plotting.
+- `src/db/models.py`: SQLAlchemy 2.0 declarative models for all 11 tables.
+- `src/db/init.py`: `init_db(db_path)` — creates all tables idempotently via `Base.metadata.create_all()`.
+- `src/config.py`: `load_config(name)` — loads and validates config YAMLs via Pydantic. Returns typed model (UniverseConfig, AgentsConfig, OptimizerConfig, BacktestConfig).
 - `scripts/`: Entrypoints (init_db, ingest_*, run_weekly, run_backtest).
-- `config/`: YAML files for universe, agents, optimizer, backtest.
+- `config/`: YAML files — universe.yaml (10 ETFs + SPY), agents.yaml (model strings, prompt paths, max_tokens, temperature), optimizer.yaml (tau, risk_aversion, max_position_weight, vol_target, turnover_penalty, transaction_cost_bps), backtest.yaml (start_date, end_date, initial_capital, rebalance_frequency).
 - `prompts/`: Versioned prompt templates (one per agent).
 - `notebooks/`: Per-milestone deliverable notebooks (01_data_exploration.ipynb, etc.).
 - `tests/`: pytest unit and smoke tests.
+
+## Database Schema (src/db/models.py)
+
+All tables live in `data/state.db`. Access via SQLAlchemy session only (Critical Rule #2).
+
+| Table | Primary Key | Notes |
+|---|---|---|
+| `prices` | (date, ticker) | OHLCV + adj_close |
+| `macro` | (date, series_id) | FRED series values |
+| `news_raw` | id (autoincr) | Finnhub headlines |
+| `polymarket_raw` | (market_id, timestamp) | Prediction market snapshots |
+| `agent_calls` | call_id (autoincr) | LLM call audit log; all cache writes land here |
+| `signals` | id (autoincr) | Per-agent signals; FK → agent_calls.call_id |
+| `views` | (date, sector) | Black-Litterman Q vector inputs |
+| `target_weights` | (date, sector) | Optimizer output |
+| `trades` | trade_id (autoincr) | Simulated fills |
+| `positions` | (date, ticker) | EOD holdings |
+| `portfolio_snapshot` | date | Aggregate portfolio stats |
 
 ## Critical Rules
 

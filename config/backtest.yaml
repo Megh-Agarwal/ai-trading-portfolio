@@ -1,0 +1,4 @@
+start_date: "2023-06-01"
+end_date: "2024-06-01"
+initial_capital: 1_000_000
+rebalance_frequency: weekly
