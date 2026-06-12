@@ -75,3 +75,15 @@ Each entry: date, context, decision, consequences.
 **Consequences:** Each daily row carries the most recently *released* value — this correctly reflects the information available on that date and avoids look-ahead bias. The 1–4 week publication lag in CPI and UNRATE is preserved implicitly. Downstream agents should not treat daily macro values as "same-day" updates — the lag is part of the signal.
 
 ---
+
+## ADR-007 — ETF holdings source and refresh cadence
+
+**Date:** 2026-06-11
+
+**Context:** Agent 1 (news sentiment) needs a list of individual stock tickers to pull news for, aggregated to the sector level. Options: (a) scrape SSGA's ETF pages directly — reliable but brittle HTML parsing; (b) use yfinance `Ticker.funds_data.top_holdings` — simpler, depends on Yahoo Finance's data feed; (c) hardcode a static list — zero network dependency but goes stale. The top 10 holdings of each SPDR sector ETF together represent the bulk of each sector's weight. Holdings change slowly — rebalances happen quarterly.
+
+**Decision:** Use `yfinance.Ticker(etf).funds_data.top_holdings` to fetch the top 10 holdings per sector ETF and cache the result in `config/sector_holdings.yaml`. Refresh by re-running `scripts/update_holdings.py` each quarter. At the time of writing, the 100 tickers across 10 ETFs have zero cross-sector overlap.
+
+**Consequences:** The YAML is the source of truth for Agent 1 — if Yahoo Finance's funds data is stale or unavailable, the cached YAML still works. The validation step in `update_holdings.py` logs any cross-sector overlap so analysts can decide whether to deduplicate. If yfinance changes its `funds_data` API, the scraper is a one-file change.
+
+---

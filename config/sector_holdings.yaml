@@ -1,0 +1,114 @@
+# Sector ETF top-10 holdings cache — refresh quarterly
+# Generated: 2026-06-11 via yfinance funds_data.top_holdings
+# Cross-sector overlaps: none
+#
+XLB:
+- LIN
+- NEM
+- NUE
+- FCX
+- VMC
+- CRH
+- APD
+- STLD
+- CTVA
+- SHW
+XLE:
+- XOM
+- CVX
+- COP
+- SLB
+- WMB
+- VLO
+- MPC
+- EOG
+- PSX
+- BKR
+XLF:
+- BRK-B
+- JPM
+- V
+- MA
+- BAC
+- GS
+- MS
+- WFC
+- C
+- AXP
+XLI:
+- CAT
+- GE
+- GEV
+- RTX
+- BA
+- UNP
+- ETN
+- HON
+- UBER
+- DE
+XLK:
+- NVDA
+- AAPL
+- MSFT
+- MU
+- AVGO
+- AMD
+- INTC
+- CSCO
+- LRCX
+- ORCL
+XLP:
+- WMT
+- COST
+- PG
+- KO
+- PM
+- MDLZ
+- MO
+- CL
+- PEP
+- MNST
+XLRE:
+- WELL
+- PLD
+- EQIX
+- AMT
+- SPG
+- DLR
+- PSA
+- VTR
+- CCI
+- O
+XLU:
+- NEE
+- SO
+- DUK
+- CEG
+- AEP
+- SRE
+- D
+- VST
+- ETR
+- XEL
+XLV:
+- LLY
+- JNJ
+- ABBV
+- UNH
+- MRK
+- TMO
+- AMGN
+- GILD
+- ISRG
+- PFE
+XLY:
+- AMZN
+- TSLA
+- HD
+- TJX
+- MCD
+- BKNG
+- LOW
+- SBUX
+- MAR
+- GM
