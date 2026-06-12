@@ -201,6 +201,13 @@ def write_polymarket(snapshots: list[dict], engine: Engine) -> int:
 def _extract_yes_prob(raw: dict) -> float:
     """Parse the YES implied probability from a Gamma API market dict."""
     outcome_prices = raw.get("outcomePrices")
+    # Gamma API returns outcomePrices as a JSON-encoded string, e.g. '["0.17","0.83"]'
+    if isinstance(outcome_prices, str):
+        try:
+            import json as _json
+            outcome_prices = _json.loads(outcome_prices)
+        except (ValueError, TypeError):
+            outcome_prices = None
     if isinstance(outcome_prices, list) and outcome_prices:
         try:
             return float(outcome_prices[0])

@@ -1,23 +1,24 @@
 # Curated macro-relevant Polymarket markets
 #
-# Market IDs are Gamma API numeric IDs. To refresh this list:
-#   1. Browse https://polymarket.com/economy and https://polymarket.com/markets?tag=economy
-#   2. Open each market, copy the ID from the URL or Gamma API
-#   3. Update market_id and end_date below; re-run scripts/ingest_polymarket.py
+# Market IDs are Gamma API numeric IDs (integer strings).
+# To refresh this list:
+#   1. curl https://gamma-api.polymarket.com/events?active=true&closed=false&limit=200
+#   2. Find a market, copy its numeric "id" field
+#   3. Update market_id below; re-run scripts/ingest_polymarket.py
 #
 # Sector impact notation:
 #   positive_if_yes  — ETF price likely rises if the market resolves YES
 #   negative_if_yes  — ETF price likely falls if the market resolves YES
 #   mixed            — direction depends on magnitude or secondary effects
 #
-# Mapping last verified: 2026-06-11
+# Mapping last verified: 2026-06-12
 
 markets:
 
   # ── Monetary policy ──────────────────────────────────────────────────────
 
-  - market_id: "fed-cut-july-2026"
-    question: "Will the Fed cut interest rates at the July 2026 FOMC meeting?"
+  - market_id: "1439536"
+    question: "Fed rate cut by July 2026 meeting?"
     category: economy
     confidence: high
     rationale: >
@@ -30,8 +31,8 @@ markets:
       XLK: positive_if_yes    # growth stocks re-rate on lower discount rate
       XLY: positive_if_yes    # consumer credit costs fall
 
-  - market_id: "fed-cuts-3plus-2026"
-    question: "Will the Federal Reserve cut rates 3 or more times in 2026?"
+  - market_id: "616905"
+    question: "Will 3 fed rate cuts happen in 2026?"
     category: economy
     confidence: high
     rationale: >
@@ -44,23 +45,23 @@ markets:
       XLK: positive_if_yes
       XLB: positive_if_yes    # lower cost of capital for materials capex
 
-  - market_id: "10y-treasury-above-5-2026"
-    question: "Will the 10-year Treasury yield exceed 5% at any point in 2026?"
+  - market_id: "1115677"
+    question: "Jerome Powell out from Fed Board by December 31?"
     category: economy
-    confidence: high
+    confidence: medium
     rationale: >
-      Elevated long-end yields compress rate-sensitive sector multiples and
-      widen bank NIM — opposite of rate-cut markets.
+      Fed leadership change signals policy uncertainty. Markets price in
+      inflation risk and potential yield curve steepening.
     sector_impacts:
-      XLU: negative_if_yes
+      XLU: negative_if_yes    # rate uncertainty hurts rate-sensitive sectors
       XLRE: negative_if_yes
-      XLF: positive_if_yes    # NIM widens; absolute rate premium increases
-      XLK: negative_if_yes    # high-duration tech valuations compressed
+      XLF: mixed              # uncertainty cuts both ways for banks
+      XLK: negative_if_yes    # policy risk discount on growth stocks
 
   # ── Macro regime ─────────────────────────────────────────────────────────
 
-  - market_id: "us-recession-2026"
-    question: "Will the US enter a recession in 2026?"
+  - market_id: "609655"
+    question: "US recession by end of 2026?"
     category: economy
     confidence: high
     rationale: >
@@ -76,22 +77,22 @@ markets:
       XLU: positive_if_yes    # utilities are countercyclical
       XLV: positive_if_yes    # healthcare is countercyclical
 
-  - market_id: "us-cpi-above-3-any-month-2026"
-    question: "Will US CPI inflation exceed 3% YoY in any month of 2026?"
+  - market_id: "616902"
+    question: "Will no Fed rate cuts happen in 2026?"
     category: economy
     confidence: medium
     rationale: >
-      Re-acceleration of inflation delays rate cuts and pushes long-end yields
-      higher — bad for duration-sensitive sectors, good for real assets.
+      No cuts signal persistent inflation or policy caution, keeping long-end
+      yields elevated — bad for duration-sensitive sectors, supports bank margins.
     sector_impacts:
-      XLU: negative_if_yes    # higher rates on re-pricing fears
+      XLU: negative_if_yes    # higher-for-longer hurts yield proxies
       XLRE: negative_if_yes
-      XLF: mixed              # higher rates help NIM but credit risk rises
-      XLE: positive_if_yes    # energy is an inflation component
+      XLF: positive_if_yes    # NIM stays wide
+      XLE: positive_if_yes    # inflation persistence benefits real assets
       XLB: positive_if_yes    # materials/commodities hedge inflation
 
-  - market_id: "us-unemployment-above-5-2026"
-    question: "Will US unemployment rate exceed 5% in any month of 2026?"
+  - market_id: "1087309"
+    question: "Will US unemployment reach at least 5.0% in 2026?"
     category: economy
     confidence: medium
     rationale: >
@@ -106,13 +107,13 @@ markets:
 
   # ── Energy & commodities ─────────────────────────────────────────────────
 
-  - market_id: "wti-above-90-end-2026"
-    question: "Will WTI crude oil price exceed $90 per barrel by end of 2026?"
+  - market_id: "2126461"
+    question: "Will Crude Oil reach a new all-time high by December 31?"
     category: economy
     confidence: medium
     rationale: >
-      High oil prices directly boost XLE earnings and raw material costs for
-      manufacturing. Consumer staples and discretionary face margin pressure.
+      Oil all-time high (above ~$130/barrel) signals supply shock. Direct revenue
+      tailwind for XLE; input cost headwind for industrials and consumer sectors.
     sector_impacts:
       XLE: positive_if_yes    # direct revenue tailwind
       XLB: positive_if_yes    # energy-related materials benefit
@@ -122,26 +123,25 @@ markets:
 
   # ── Trade & geopolitics ──────────────────────────────────────────────────
 
-  - market_id: "us-eu-tariffs-25pct-2026"
-    question: "Will the US impose tariffs of 25% or more on EU goods in 2026?"
+  - market_id: "1259129"
+    question: "100% tariff on Canada in effect by June 30?"
     category: politics
     confidence: medium
     rationale: >
-      Broad EU tariffs disrupt industrial supply chains and consumer goods
-      imports; retaliation risk hits US tech and agricultural exporters.
+      Broad North American tariffs disrupt industrial supply chains and raise
+      input costs for manufacturing. Retaliation risk hits energy exporters.
     sector_impacts:
       XLI: negative_if_yes    # supply chain disruption
       XLB: negative_if_yes    # raw material cost increases
       XLY: negative_if_yes    # consumer goods price increases
-      XLK: negative_if_yes    # tech hardware supply chain hit
-      XLE: mixed              # EU energy import substitution possible
+      XLE: mixed              # Canada energy trade disruption uncertain
 
-  - market_id: "russia-ukraine-ceasefire-2026"
-    question: "Will there be a Russia-Ukraine ceasefire agreement in 2026?"
+  - market_id: "665224"
+    question: "Ukraine signs peace deal with Russia before 2027?"
     category: geopolitics
     confidence: low
     rationale: >
-      Ceasefire reduces energy supply disruption premium and commodity risk.
+      Peace deal reduces energy supply disruption premium and commodity risk.
       European reconstruction demand is a tailwind for industrials and materials.
     sector_impacts:
       XLE: negative_if_yes    # energy supply premium evaporates
@@ -149,52 +149,55 @@ markets:
       XLI: positive_if_yes    # reconstruction demand
       XLK: positive_if_yes    # risk-on re-rating
 
-  # ── Sector-specific ──────────────────────────────────────────────────────
-
-  - market_id: "us-housing-prices-fall-yoy-2026"
-    question: "Will US national home prices fall year-over-year in 2026?"
-    category: economy
-    confidence: medium
-    rationale: >
-      Falling home prices signal distress in real estate and mortgage books.
-      Lower valuations hurt XLRE directly and impair bank collateral.
-    sector_impacts:
-      XLRE: negative_if_yes
-      XLF: negative_if_yes    # mortgage impairments, HELOC losses
-      XLB: negative_if_yes    # homebuilding materials demand falls
-
-  - market_id: "us-ai-regulation-bill-2026"
-    question: "Will the US Congress pass comprehensive AI regulation in 2026?"
-    category: politics
+  - market_id: "567621"
+    question: "Will China invade Taiwan before 2027?"
+    category: geopolitics
     confidence: low
     rationale: >
-      Binding AI regulation imposes compliance costs on large tech platforms
-      and data centre operators; near-term negative but signals market
-      legitimacy long-term.
+      Taiwan invasion would trigger semiconductor supply chain collapse and
+      global risk-off. XLK most directly exposed via TSMC-dependent companies.
     sector_impacts:
-      XLK: negative_if_yes    # compliance overhead, product restrictions
+      XLK: negative_if_yes    # semiconductor supply chain collapse
+      XLI: negative_if_yes    # global trade disruption
+      XLE: positive_if_yes    # safe-haven energy demand spike
+      XLB: negative_if_yes    # trade route disruption
 
-  - market_id: "china-gdp-growth-above-5-2026"
-    question: "Will China report GDP growth above 5% for full-year 2026?"
+  # ── Sector-specific ──────────────────────────────────────────────────────
+
+  - market_id: "1327148"
+    question: "Will the U.S. 30-year Fixed-Rate Mortgage hit 5.90% (LOW) by December 31?"
     category: economy
     confidence: medium
     rationale: >
-      China growth drives commodity demand (steel, copper) and luxury/consumer
-      goods exports from US multinationals.
+      Mortgage rates falling to 5.9% signals significant easing, boosting
+      housing affordability and XLRE valuations. Positive for homebuilders.
     sector_impacts:
-      XLB: positive_if_yes    # commodity demand
-      XLI: positive_if_yes    # capital goods exports
-      XLY: positive_if_yes    # luxury and consumer goods multinationals
-      XLE: positive_if_yes    # energy demand
+      XLRE: positive_if_yes   # lower financing costs support valuations
+      XLF: mixed              # lower rates compress NIM but lift loan volume
+      XLB: positive_if_yes    # construction materials demand rises
 
-  - market_id: "us-deficit-above-2p5t-fy2026"
-    question: "Will the US federal budget deficit exceed $2.5 trillion in FY2026?"
+  - market_id: "950854"
+    question: "Will S&P 500 have the best performance in 2026 vs Gold and Bitcoin?"
     category: economy
     confidence: medium
     rationale: >
-      Larger deficits imply sustained Treasury supply pressure, keeping long-end
-      yields elevated — a headwind for rate-sensitive sectors.
+      Equity outperformance signals risk-on sentiment and confidence in corporate
+      earnings. Broad positive for cyclical sectors over defensive.
     sector_impacts:
-      XLU: negative_if_yes
-      XLRE: negative_if_yes
-      XLF: mixed              # yields up helps NIM but sovereign risk grows
+      XLK: positive_if_yes    # growth leads in risk-on
+      XLY: positive_if_yes    # consumer discretionary benefits
+      XLF: positive_if_yes    # financials outperform in growth regime
+      XLP: negative_if_yes    # defensives lag in risk-on
+      XLU: negative_if_yes    # utilities lag in risk-on
+
+  - market_id: "665494"
+    question: "Will Trump reduce the deficit before 2027?"
+    category: economy
+    confidence: low
+    rationale: >
+      Deficit reduction implies lower Treasury supply, easing upward yield pressure.
+      Rate-sensitive sectors benefit; reduces sovereign risk premium.
+    sector_impacts:
+      XLU: positive_if_yes    # lower yields support yield proxies
+      XLRE: positive_if_yes
+      XLF: mixed              # lower yields compress NIM
