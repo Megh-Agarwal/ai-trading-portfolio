@@ -13,7 +13,7 @@ This is a personal research project and resume artifact. Code quality matters; o
 - Storage: SQLite via SQLAlchemy ORM
 - Optimization: CVXPY
 - LLM API: Anthropic SDK (Claude Haiku 4.5 + Sonnet 4.6)
-- Data: yfinance, fredapi, finnhub-python, polymarket-apis
+- Data: yfinance, fredapi, finnhub-python, py-clob-client
 - Testing: pytest
 
 ## Architecture
