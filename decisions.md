@@ -76,6 +76,21 @@ Each entry: date, context, decision, consequences.
 
 ---
 
+## ADR-008 — Finnhub news ingestion: rate limiting, dedup strategy, and monthly chunking
+
+**Date:** 2026-06-11
+
+**Context:** Finnhub's free tier permits ~60 API calls/minute and returns up to ~12 months of company news per ticker. Three design choices needed to be locked down: (1) how to enforce the rate limit without a queue or thread pool; (2) how to deduplicate articles across re-runs without adding a unique constraint to the DB; (3) how to structure the date window across 100 tickers × 12 months without hitting pagination limits.
+
+**Decision:**
+1. **Rate limiting:** Module-level `_last_call_ts` global + `_rate_limit()` guard before every API call. Sleep only as long as needed. No queue, no threading — ingestion is single-threaded by design.
+2. **Dedup by URL:** Query existing URLs in batch before insert (`NewsRaw.url.in_(urls)`), then only insert rows not already present. No `UNIQUE` constraint added to `news_raw.url` because SQLite `ON CONFLICT IGNORE` would silently swallow errors for other columns — application-layer dedup is explicit and testable.
+3. **Monthly chunking:** Split the 12-month backfill window into calendar-month slices. This keeps each API call well within Finnhub's undocumented per-request result cap and makes resumable partial ingestion straightforward.
+
+**Consequences:** Wall time for a full backfill (1200 calls) is ~22 minutes. Re-runs are safe (idempotent). Historical depth is validated before the full loop fires — if Finnhub returns < 10 months the window is shortened and a warning is logged. Application-layer dedup adds one SELECT per batch of articles but avoids schema coupling.
+
+---
+
 ## ADR-007 — ETF holdings source and refresh cadence
 
 **Date:** 2026-06-11
