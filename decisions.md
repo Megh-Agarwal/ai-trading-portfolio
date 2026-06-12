@@ -63,3 +63,15 @@ Each entry: date, context, decision, consequences.
 **Consequences:** Zero infrastructure overhead; the database is a single file that can be copied for inspection or backup. SQLAlchemy abstracts the engine, so migration to Postgres in a future milestone is a one-line config change. Concurrent write contention is not a concern at this cadence.
 
 ---
+
+## ADR-006 — Forward-fill for macro frequency alignment
+
+**Date:** 2026-06-11
+
+**Context:** Price data is daily, but the macro series have mixed frequencies: T10Y2Y, DGS10, VIXCLS, and DTWEXBGS are daily (business days only); CPIAUCSL and UNRATE are monthly; ICSA is weekly (Thursday release). The macro regime agent needs a consistent daily view so it can be called on any given trading day without special-casing frequency.
+
+**Decision:** Reindex each series to a daily date range and forward-fill (no backfill). Fetch with a 90-day buffer before the requested start date so that monthly series always have a seed value on day one of the window. Rows with unavoidable leading NaN (series starts after the window) are dropped with a warning.
+
+**Consequences:** Each daily row carries the most recently *released* value — this correctly reflects the information available on that date and avoids look-ahead bias. The 1–4 week publication lag in CPI and UNRATE is preserved implicitly. Downstream agents should not treat daily macro values as "same-day" updates — the lag is part of the signal.
+
+---
