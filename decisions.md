@@ -76,6 +76,24 @@ Each entry: date, context, decision, consequences.
 
 ---
 
+## ADR-009 — Polymarket integration: Gamma API, sector mappings, and historical-data limitation
+
+**Date:** 2026-06-12
+
+**Context:** Prediction-market signals are the third input to the Black-Litterman aggregator. Three design choices were required: (1) which Polymarket API to use for data ingestion; (2) how to curate a stable, macro-relevant set of markets from a platform where markets expire on resolution; (3) how to handle the absence of a simple bulk-history download for the 12-month backtest.
+
+**Decisions:**
+
+1. **Gamma API over py-clob-client for data fetching.** The Polymarket CLOB client (`py-clob-client`) is optimised for order execution and requires API-key authentication even for reads. The Gamma REST API (`gamma-api.polymarket.com`) is public and unauthenticated; it exposes market metadata, current prices (`outcomePrices`), and volume in a single GET. `requests` is used directly — no SDK wrapper needed for read-only ingestion.
+
+2. **Manual curation into `config/polymarket_markets.yaml`.** The unique IP of the project is the sector-impact mapping: each market carries explicit `positive_if_yes` / `negative_if_yes` / `mixed` signals per ETF, derived from economic theory (rate-sensitivity, commodity exposure, consumer cyclicality). Markets were selected using three filters: (a) >$100k cumulative volume for liquidity; (b) clear 1–12 month horizon so signals are actionable on a weekly cadence; (c) each of the 10 ETF sectors covered by at least one market. 13 markets curated at launch; YAML must be refreshed quarterly as markets resolve.
+
+3. **Current-state only for live ingestion; CLOB prices-history for backtest.** Polymarket does not offer a bulk CSV history download. `fetch_market_prices(condition_id, start, end)` queries the CLOB prices-history endpoint (`clob.polymarket.com/prices-history`) which returns daily YES-token prices going back to market creation — usable for backtest but on a per-market basis. For markets that were live during the backtest window, this yields a full probability time series; for markets that postdate the window, we fall back to the current snapshot as a static prior (acknowledged limitation in the write-up).
+
+**Consequences:** The Gamma API does not require credentials (no `.env` entry needed for Polymarket). Market IDs in the YAML will expire as markets resolve; `ingest_polymarket.py` logs a warning for each skipped market. The backtest agent receives either a dynamic probability series (preferred) or a static prior (fallback) per market — the aggregator must handle both cases. This is documented as a known limitation in the methodology section.
+
+---
+
 ## ADR-008 — Finnhub news ingestion: rate limiting, dedup strategy, and monthly chunking
 
 **Date:** 2026-06-11

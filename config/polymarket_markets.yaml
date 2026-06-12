@@ -1,0 +1,200 @@
+# Curated macro-relevant Polymarket markets
+#
+# Market IDs are Gamma API numeric IDs. To refresh this list:
+#   1. Browse https://polymarket.com/economy and https://polymarket.com/markets?tag=economy
+#   2. Open each market, copy the ID from the URL or Gamma API
+#   3. Update market_id and end_date below; re-run scripts/ingest_polymarket.py
+#
+# Sector impact notation:
+#   positive_if_yes  — ETF price likely rises if the market resolves YES
+#   negative_if_yes  — ETF price likely falls if the market resolves YES
+#   mixed            — direction depends on magnitude or secondary effects
+#
+# Mapping last verified: 2026-06-11
+
+markets:
+
+  # ── Monetary policy ──────────────────────────────────────────────────────
+
+  - market_id: "fed-cut-july-2026"
+    question: "Will the Fed cut interest rates at the July 2026 FOMC meeting?"
+    category: economy
+    confidence: high
+    rationale: >
+      Rate cuts directly expand equity multiples for rate-sensitive sectors
+      and compress net interest margins for banks.
+    sector_impacts:
+      XLU: positive_if_yes    # utility dividends more attractive vs bonds
+      XLRE: positive_if_yes   # lower mortgage rates support valuations
+      XLF: negative_if_yes    # bank NIM compression outweighs volume boost
+      XLK: positive_if_yes    # growth stocks re-rate on lower discount rate
+      XLY: positive_if_yes    # consumer credit costs fall
+
+  - market_id: "fed-cuts-3plus-2026"
+    question: "Will the Federal Reserve cut rates 3 or more times in 2026?"
+    category: economy
+    confidence: high
+    rationale: >
+      Cumulative rate path matters more than any single meeting for real estate
+      and utility valuations; negative for bank margins over full year.
+    sector_impacts:
+      XLU: positive_if_yes
+      XLRE: positive_if_yes
+      XLF: negative_if_yes
+      XLK: positive_if_yes
+      XLB: positive_if_yes    # lower cost of capital for materials capex
+
+  - market_id: "10y-treasury-above-5-2026"
+    question: "Will the 10-year Treasury yield exceed 5% at any point in 2026?"
+    category: economy
+    confidence: high
+    rationale: >
+      Elevated long-end yields compress rate-sensitive sector multiples and
+      widen bank NIM — opposite of rate-cut markets.
+    sector_impacts:
+      XLU: negative_if_yes
+      XLRE: negative_if_yes
+      XLF: positive_if_yes    # NIM widens; absolute rate premium increases
+      XLK: negative_if_yes    # high-duration tech valuations compressed
+
+  # ── Macro regime ─────────────────────────────────────────────────────────
+
+  - market_id: "us-recession-2026"
+    question: "Will the US enter a recession in 2026?"
+    category: economy
+    confidence: high
+    rationale: >
+      Recession is the single most powerful sector-rotation signal:
+      defensive (XLP, XLU, XLV) outperform; cyclical (XLY, XLF, XLI) underperform.
+    sector_impacts:
+      XLY: negative_if_yes    # consumer discretionary hardest hit
+      XLF: negative_if_yes    # credit losses, NIM pressure
+      XLI: negative_if_yes    # industrial capex collapses
+      XLE: negative_if_yes    # demand destruction
+      XLB: negative_if_yes    # commodity demand falls
+      XLP: positive_if_yes    # staples are countercyclical
+      XLU: positive_if_yes    # utilities are countercyclical
+      XLV: positive_if_yes    # healthcare is countercyclical
+
+  - market_id: "us-cpi-above-3-any-month-2026"
+    question: "Will US CPI inflation exceed 3% YoY in any month of 2026?"
+    category: economy
+    confidence: medium
+    rationale: >
+      Re-acceleration of inflation delays rate cuts and pushes long-end yields
+      higher — bad for duration-sensitive sectors, good for real assets.
+    sector_impacts:
+      XLU: negative_if_yes    # higher rates on re-pricing fears
+      XLRE: negative_if_yes
+      XLF: mixed              # higher rates help NIM but credit risk rises
+      XLE: positive_if_yes    # energy is an inflation component
+      XLB: positive_if_yes    # materials/commodities hedge inflation
+
+  - market_id: "us-unemployment-above-5-2026"
+    question: "Will US unemployment rate exceed 5% in any month of 2026?"
+    category: economy
+    confidence: medium
+    rationale: >
+      Unemployment above 5% signals labour market deterioration. Consumer
+      spending falls; Fed likely accelerates cuts — conflicting effects.
+    sector_impacts:
+      XLY: negative_if_yes    # consumer spending falls
+      XLF: negative_if_yes    # credit quality deteriorates
+      XLI: negative_if_yes    # lower business investment
+      XLP: positive_if_yes    # spending shifts to staples
+      XLU: positive_if_yes    # rate cut expectations rise
+
+  # ── Energy & commodities ─────────────────────────────────────────────────
+
+  - market_id: "wti-above-90-end-2026"
+    question: "Will WTI crude oil price exceed $90 per barrel by end of 2026?"
+    category: economy
+    confidence: medium
+    rationale: >
+      High oil prices directly boost XLE earnings and raw material costs for
+      manufacturing. Consumer staples and discretionary face margin pressure.
+    sector_impacts:
+      XLE: positive_if_yes    # direct revenue tailwind
+      XLB: positive_if_yes    # energy-related materials benefit
+      XLI: negative_if_yes    # input cost pressure
+      XLY: negative_if_yes    # transportation and consumer cost headwind
+      XLP: negative_if_yes    # packaging/logistics cost headwind
+
+  # ── Trade & geopolitics ──────────────────────────────────────────────────
+
+  - market_id: "us-eu-tariffs-25pct-2026"
+    question: "Will the US impose tariffs of 25% or more on EU goods in 2026?"
+    category: politics
+    confidence: medium
+    rationale: >
+      Broad EU tariffs disrupt industrial supply chains and consumer goods
+      imports; retaliation risk hits US tech and agricultural exporters.
+    sector_impacts:
+      XLI: negative_if_yes    # supply chain disruption
+      XLB: negative_if_yes    # raw material cost increases
+      XLY: negative_if_yes    # consumer goods price increases
+      XLK: negative_if_yes    # tech hardware supply chain hit
+      XLE: mixed              # EU energy import substitution possible
+
+  - market_id: "russia-ukraine-ceasefire-2026"
+    question: "Will there be a Russia-Ukraine ceasefire agreement in 2026?"
+    category: geopolitics
+    confidence: low
+    rationale: >
+      Ceasefire reduces energy supply disruption premium and commodity risk.
+      European reconstruction demand is a tailwind for industrials and materials.
+    sector_impacts:
+      XLE: negative_if_yes    # energy supply premium evaporates
+      XLB: negative_if_yes    # commodity risk premium falls
+      XLI: positive_if_yes    # reconstruction demand
+      XLK: positive_if_yes    # risk-on re-rating
+
+  # ── Sector-specific ──────────────────────────────────────────────────────
+
+  - market_id: "us-housing-prices-fall-yoy-2026"
+    question: "Will US national home prices fall year-over-year in 2026?"
+    category: economy
+    confidence: medium
+    rationale: >
+      Falling home prices signal distress in real estate and mortgage books.
+      Lower valuations hurt XLRE directly and impair bank collateral.
+    sector_impacts:
+      XLRE: negative_if_yes
+      XLF: negative_if_yes    # mortgage impairments, HELOC losses
+      XLB: negative_if_yes    # homebuilding materials demand falls
+
+  - market_id: "us-ai-regulation-bill-2026"
+    question: "Will the US Congress pass comprehensive AI regulation in 2026?"
+    category: politics
+    confidence: low
+    rationale: >
+      Binding AI regulation imposes compliance costs on large tech platforms
+      and data centre operators; near-term negative but signals market
+      legitimacy long-term.
+    sector_impacts:
+      XLK: negative_if_yes    # compliance overhead, product restrictions
+
+  - market_id: "china-gdp-growth-above-5-2026"
+    question: "Will China report GDP growth above 5% for full-year 2026?"
+    category: economy
+    confidence: medium
+    rationale: >
+      China growth drives commodity demand (steel, copper) and luxury/consumer
+      goods exports from US multinationals.
+    sector_impacts:
+      XLB: positive_if_yes    # commodity demand
+      XLI: positive_if_yes    # capital goods exports
+      XLY: positive_if_yes    # luxury and consumer goods multinationals
+      XLE: positive_if_yes    # energy demand
+
+  - market_id: "us-deficit-above-2p5t-fy2026"
+    question: "Will the US federal budget deficit exceed $2.5 trillion in FY2026?"
+    category: economy
+    confidence: medium
+    rationale: >
+      Larger deficits imply sustained Treasury supply pressure, keeping long-end
+      yields elevated — a headwind for rate-sensitive sectors.
+    sector_impacts:
+      XLU: negative_if_yes
+      XLRE: negative_if_yes
+      XLF: mixed              # yields up helps NIM but sovereign risk grows
