@@ -4,6 +4,7 @@ import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Date,
     DateTime,
     Float,
@@ -84,6 +85,7 @@ class AgentCall(Base):
     tokens_out: Mapped[int] = mapped_column(Integer)
     cost_usd: Mapped[float | None] = mapped_column(Float)
     latency_ms: Mapped[float | None] = mapped_column(Float)
+    cached: Mapped[bool | None] = mapped_column(Boolean)
 
 
 class Signal(Base):
