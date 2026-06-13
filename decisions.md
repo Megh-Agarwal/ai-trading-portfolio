@@ -130,3 +130,23 @@ Each entry: date, context, decision, consequences.
 **Decision:** Add `src/ingestion/alpha_vantage_news.py` as a parallel adapter. Keep `src/ingestion/news.py` (Finnhub) unchanged — it correctly captures recent articles and may be useful for forward paper-trading updates. The AV adapter batches all 10 constituent tickers per ETF into one API call (10 calls total for the full universe), staying well within the 25 calls/day free tier limit. Fan-out logic in `fetch_av_news` creates one NewsRaw row per (article, matched-ticker) pair, so an article covering both AAPL and MSFT produces two rows. `write_av_news` deduplicates on (url, ticker) pairs rather than url alone, because the same article legitimately maps to multiple tickers.
 
 **Consequences:** The `news_raw` table now receives data from two sources (source column distinguishes them). Historical backfill uses AV; ongoing collection can use either. Free tier caps at 200 articles per call — sectors with high news volume may see truncation over an 18-month window; a warning is logged when this occurs. Upgrading to AV premium raises the limit to 1000 per call. `ALPHA_VANTAGE_API_KEY` added to `.env.example`.
+
+---
+
+## ADR-011 — Views aggregation: signal-to-return mapping and agent weights
+
+**Date:** 2026-06-13
+
+**Context:** `build_views` (Ticket 2.5) converts three agent outputs on a [-1, 1] scale into Black-Litterman views (Q vector, Omega diagonal matrix). Two design choices required explicit justification because they are non-identifiable from data without a calibration exercise: (1) the scale factor mapping a ±1 signal to an expected excess return, and (2) the relative weights assigned to the three agents.
+
+**Decision:**
+
+1. **Signal-to-return mapping:** A ±1 signal represents a maximum conviction directional view and maps to ±5 % annualised expected excess return, de-annualised to weekly (÷52). Rationale: 5 % annualised excess return is roughly one standard deviation of annual sector-ETF active returns, making a unit signal mean "one-sigma conviction". The parameter is named `_MAX_EXCESS_RETURN_ANNUAL` and lives in `src/aggregator/views.py` so it can be adjusted for calibration without touching logic.
+
+2. **Agent weights (40/30/30):** News sentiment is given slightly more weight (0.40) because it is the highest-frequency, most directly price-relevant signal. Macro regime (0.30) and Polymarket events (0.30) carry equal weight because both are structural signals operating on a slower timescale. This split is defensible but not estimated — it should be treated as a prior and calibrated during backtesting (M5).
+
+3. **Macro as confidence multiplier:** The macro regime does not provide per-sector directional views. Instead, it scales the magnitude of all views via `regime_scale = 0.75 + 0.25 × regime_float`, giving [0.50, 0.75, 1.00] for [risk_off, neutral, risk_on]. This means risk-off regimes shrink both Q (smaller bets) and increase Omega (more uncertainty), producing smaller position changes in the BL optimizer — capturing the intuition that macro headwinds should dampen conviction in any single-stock or sector call.
+
+4. **Omega construction:** `Omega_ii = OMEGA_BASE / max(conviction_i, MIN_CONVICTION)` where `OMEGA_BASE = 0.0001` (~1 bp² weekly at unit conviction). The inverse-proportional form is the simplest link between conviction and view uncertainty consistent with BL theory. A more sophisticated calibration would set `OMEGA = tau × P × Sigma × P'` but that requires the covariance matrix from the optimizer — this simplified form decouples the aggregator from the optimizer layer.
+
+**Consequences:** All four parameters (`_MAX_EXCESS_RETURN_ANNUAL`, default weights, `_OMEGA_BASE`, `_MIN_CONVICTION`) are module-level constants in `views.py` that can be swept during M5 backtest calibration. The signal-to-return mapping is the most sensitive: changing it from 5 % to 10 % doubles all position tilts. This must be documented prominently in the eventual paper's methodology section.
