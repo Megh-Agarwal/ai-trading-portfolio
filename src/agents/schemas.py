@@ -26,8 +26,13 @@ class NewsSignal(BaseModel):
 
 
 class MacroRegimeSignal(BaseModel):
-    """Output schema for the macro regime agent."""
+    """Output schema for the macro regime agent.
 
+    reasoning: chain-of-thought scratchpad (stored in agent_calls.response_json).
+    rationale: 2-3 sentence clean summary for logging and display.
+    """
+
+    reasoning: str
     regime: Literal["risk_on", "risk_off", "neutral"]
     rate_outlook: Literal["rising", "falling", "stable"]
     confidence: float = Field(ge=0.0, le=1.0)

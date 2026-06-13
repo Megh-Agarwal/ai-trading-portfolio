@@ -130,6 +130,7 @@ def test_news_signal_missing_field():
 # ---------------------------------------------------------------------------
 
 _VALID_MACRO = {
+    "reasoning": "VIX elevated and rising. Yield curve deeply inverted. FOMC hawkish language persists.",
     "regime": "risk_off",
     "rate_outlook": "rising",
     "confidence": 0.9,
@@ -394,3 +395,168 @@ def test_news_agent_run_is_idempotent():
 
     # Still exactly 10 rows, not 20
     assert len(rows) == 10
+
+
+# ---------------------------------------------------------------------------
+# MacroRegimeSignal schema
+# ---------------------------------------------------------------------------
+
+_VALID_MACRO_SIGNAL = {
+    "reasoning": "VIX at 18.5, below 90d avg of 20.1 — mild risk-on. T10Y2Y at -0.3, improving from -0.5 avg. DGS10 fell 25bp in 30d signalling rate relief. CPI YoY 3.2%, declining trend. ICSA stable near 210k. Overall: cautious risk-on.",
+    "regime": "neutral",
+    "rate_outlook": "falling",
+    "confidence": 0.68,
+    "rationale": "Mixed but slightly improving macro backdrop. VIX easing and yield curve less inverted point toward neutral-to-risk-on, while still-elevated CPI prevents a full risk-on call. Rate outlook leans falling as the Fed approaches its terminal rate.",
+}
+
+
+def test_macro_regime_signal_valid_with_reasoning():
+    sig = MacroRegimeSignal.model_validate(_VALID_MACRO_SIGNAL)
+    assert sig.regime == "neutral"
+    assert sig.rate_outlook == "falling"
+    assert sig.confidence == pytest.approx(0.68)
+    assert len(sig.reasoning) > 10
+    assert len(sig.rationale) > 10
+
+
+def test_macro_regime_signal_missing_reasoning():
+    bad = {k: v for k, v in _VALID_MACRO_SIGNAL.items() if k != "reasoning"}
+    with pytest.raises(ValidationError):
+        MacroRegimeSignal.model_validate(bad)
+
+
+# ---------------------------------------------------------------------------
+# MacroAgent
+# ---------------------------------------------------------------------------
+
+
+def _seed_macro(db, date: datetime.date) -> None:
+    """Insert minimal macro rows covering last 90 days so prepare_input doesn't return empty."""
+    from db.models import Macro
+
+    series_values = {
+        "VIXCLS": 18.5, "T10Y2Y": -0.35, "DGS10": 4.30,
+        "DTWEXBGS": 103.5, "CPIAUCSL": 309.0, "UNRATE": 3.8, "ICSA": 210000,
+    }
+
+    rows = []
+    for days_back in range(0, 95, 1):
+        d = date - datetime.timedelta(days=days_back)
+        for sid, val in series_values.items():
+            rows.append(Macro(date=d, series_id=sid, value=val))
+
+    # Seed CPI 12 months back for YoY calculation
+    for days_back in range(360, 400):
+        d = date - datetime.timedelta(days=days_back)
+        rows.append(Macro(date=d, series_id="CPIAUCSL", value=295.0))
+
+    with Session(db) as s:
+        s.add_all(rows)
+        s.commit()
+
+
+def test_macro_agent_uses_sonnet_model():
+    from agents.macro_agent import MacroAgent
+
+    agent = MacroAgent()
+    assert "sonnet" in agent._model.lower()
+
+
+def test_macro_agent_prepare_input_returns_derived_features():
+    from agents.macro_agent import MacroAgent
+
+    db = _make_engine()
+    date = datetime.date(2024, 6, 7)
+    _seed_macro(db, date)
+
+    agent = MacroAgent()
+    data = agent.prepare_input(date, db)
+
+    assert data["analysis_date"] == "2024-06-07"
+    features = data["derived_features"]
+    assert "vix_current" in features
+    assert "t10y2y_current" in features
+    assert "dgs10_current" in features
+    assert "cpi_yoy_pct" in features
+    assert "unrate_current" in features
+    assert "icsa_current" in features
+
+
+def test_macro_agent_prepare_input_series_30d_keys():
+    from agents.macro_agent import MacroAgent
+
+    db = _make_engine()
+    date = datetime.date(2024, 6, 7)
+    _seed_macro(db, date)
+
+    agent = MacroAgent()
+    data = agent.prepare_input(date, db)
+
+    # All 7 FRED series should be present
+    assert set(data["series_30d"].keys()) == {
+        "VIXCLS", "T10Y2Y", "DGS10", "DTWEXBGS", "CPIAUCSL", "UNRATE", "ICSA"
+    }
+    # 30 days of daily data
+    assert len(data["series_30d"]["VIXCLS"]) == 31  # 0..30 inclusive
+
+
+def test_macro_agent_prepare_input_empty_db_returns_empty_features():
+    from agents.macro_agent import MacroAgent
+
+    db = _make_engine()
+    agent = MacroAgent()
+    data = agent.prepare_input(datetime.date(2024, 6, 7), db)
+
+    assert data["derived_features"] == {}
+    assert data["series_30d"] == {}
+
+
+def test_macro_agent_run_writes_2_signal_rows():
+    from agents.macro_agent import MacroAgent
+
+    db = _make_engine()
+    date = datetime.date(2024, 6, 7)
+    _seed_macro(db, date)
+
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
+        return _llm_response(_VALID_MACRO_SIGNAL)
+
+    agent = MacroAgent(cache=fake_cache)
+    result = agent.run(date, db)
+
+    assert result["regime"] == "neutral"
+    assert result["rate_outlook"] == "falling"
+
+    with Session(db) as s:
+        rows = s.query(Signal).filter_by(agent_name="macro", date=date).all()
+
+    assert len(rows) == 2
+    targets = {r.target for r in rows}
+    assert targets == {"macro_regime", "rate_outlook"}
+
+    regime_row = next(r for r in rows if r.target == "macro_regime")
+    assert regime_row.signal_value == pytest.approx(0.0)  # neutral → 0.0
+
+    rate_row = next(r for r in rows if r.target == "rate_outlook")
+    assert rate_row.signal_value == pytest.approx(-1.0)  # falling → -1.0
+
+
+def test_macro_agent_run_is_idempotent():
+    from agents.macro_agent import MacroAgent
+
+    db = _make_engine()
+    date = datetime.date(2024, 6, 7)
+    _seed_macro(db, date)
+
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
+        return _llm_response(_VALID_MACRO_SIGNAL)
+
+    agent = MacroAgent(cache=fake_cache)
+    agent.run(date, db)
+    agent.run(date, db)
+
+    with Session(db) as s:
+        rows = s.query(Signal).filter_by(agent_name="macro", date=date).all()
+
+    # 2 rows, not 4
+    assert len(rows) == 2

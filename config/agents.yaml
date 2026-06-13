@@ -7,7 +7,7 @@ agents:
 
   macro:
     model: claude-sonnet-4-6
-    prompt_template: prompts/macro.txt
+    prompt_template: prompts/macro_regime.txt
     max_tokens: 2048
     temperature: 0.0
 
