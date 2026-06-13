@@ -12,7 +12,7 @@ agents:
     temperature: 0.0
 
   events:
-    model: claude-sonnet-4-6
-    prompt_template: prompts/events.txt
+    model: claude-haiku-4-5-20251001
+    prompt_template: prompts/polymarket_events.txt
     max_tokens: 1024
     temperature: 0.0

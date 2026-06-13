@@ -167,10 +167,14 @@ def test_macro_signal_confidence_out_of_range():
 # PolymarketSignal schema
 # ---------------------------------------------------------------------------
 
+_ALL_SECTORS = ["XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU"]
+
 _VALID_POLY = {
     "implied_prob": {"609655": 0.72, "612300": 0.35},
     "sector_impacts": {"XLF": 0.5, "XLU": -0.3},
+    "driving_events": {"XLF": ["Fed rate cut by July 2026?"], "XLU": ["US recession by end of 2026?"]},
     "time_horizon": "short",
+    "overall_confidence": 0.6,
 }
 
 
@@ -178,6 +182,8 @@ def test_polymarket_signal_valid():
     sig = PolymarketSignal.model_validate(_VALID_POLY)
     assert sig.implied_prob["609655"] == 0.72
     assert sig.sector_impacts["XLF"] == 0.5
+    assert sig.overall_confidence == 0.6
+    assert "XLF" in sig.driving_events
 
 
 def test_polymarket_signal_prob_out_of_range():
@@ -193,7 +199,13 @@ def test_polymarket_signal_impact_out_of_range():
 
 
 def test_polymarket_signal_missing_time_horizon():
-    bad = {"implied_prob": {"609655": 0.5}, "sector_impacts": {"XLF": 0.1}}
+    bad = {k: v for k, v in _VALID_POLY.items() if k != "time_horizon"}
+    with pytest.raises(ValidationError):
+        PolymarketSignal.model_validate(bad)
+
+
+def test_polymarket_signal_missing_overall_confidence():
+    bad = {k: v for k, v in _VALID_POLY.items() if k != "overall_confidence"}
     with pytest.raises(ValidationError):
         PolymarketSignal.model_validate(bad)
 
@@ -560,3 +572,146 @@ def test_macro_agent_run_is_idempotent():
 
     # 2 rows, not 4
     assert len(rows) == 2
+
+
+# ---------------------------------------------------------------------------
+# PolymarketAgent
+# ---------------------------------------------------------------------------
+
+_FULL_POLY_SIGNAL = {
+    "implied_prob": {"609655": 0.28, "1439536": 0.71},
+    "sector_impacts": {s: 0.0 for s in _ALL_SECTORS} | {"XLK": 0.18, "XLF": -0.08, "XLY": 0.28, "XLRE": 0.18},
+    "driving_events": {
+        "XLK": ["Fed rate cut by July 2026 meeting?"],
+        "XLF": ["Fed rate cut by July 2026 meeting?"],
+        "XLY": ["Fed rate cut by July 2026 meeting?", "US recession by end of 2026?"],
+        "XLRE": ["Fed rate cut by July 2026 meeting?"],
+    },
+    "time_horizon": "medium",
+    "overall_confidence": 0.62,
+}
+
+
+def _seed_polymarket(db, market_ids: list[str], date: datetime.date) -> None:
+    """Insert minimal polymarket_raw rows for given market_ids."""
+    from db.models import PolymarketRaw
+
+    ts_now = datetime.datetime.combine(date, datetime.time(12, 0))
+    ts_30d = datetime.datetime.combine(date - datetime.timedelta(days=28), datetime.time(12, 0))
+    end_dt = date + datetime.timedelta(days=60)
+
+    with Session(db) as s:
+        for mid in market_ids:
+            s.add(PolymarketRaw(
+                market_id=mid, timestamp=ts_30d,
+                question=f"Question for {mid}", implied_prob=0.50,
+                volume=500000.0, end_date=end_dt,
+            ))
+            s.add(PolymarketRaw(
+                market_id=mid, timestamp=ts_now,
+                question=f"Question for {mid}", implied_prob=0.60,
+                volume=600000.0, end_date=end_dt,
+            ))
+        s.commit()
+
+
+def test_polymarket_agent_uses_haiku_model():
+    from agents.polymarket_agent import PolymarketAgent
+
+    agent = PolymarketAgent()
+    assert "haiku" in agent._model.lower()
+
+
+def test_polymarket_agent_prepare_input_structure():
+    from agents.polymarket_agent import PolymarketAgent
+
+    db = _make_engine()
+    date = datetime.date(2024, 6, 7)
+
+    agent = PolymarketAgent()
+    # Seed two of the curated market IDs
+    market_ids = [m["market_id"] for m in agent._curated[:2]]
+    _seed_polymarket(db, market_ids, date)
+
+    data = agent.prepare_input(date, db)
+
+    assert data["analysis_date"] == "2024-06-07"
+    assert "markets" in data
+    # All curated markets should appear in the input (even those with no DB row)
+    assert len(data["markets"]) == len(agent._curated)
+
+
+def test_polymarket_agent_prepare_input_includes_prob_and_trend():
+    from agents.polymarket_agent import PolymarketAgent
+
+    db = _make_engine()
+    date = datetime.date(2024, 6, 7)
+
+    agent = PolymarketAgent()
+    market_ids = [m["market_id"] for m in agent._curated[:1]]
+    _seed_polymarket(db, market_ids, date)
+
+    data = agent.prepare_input(date, db)
+    seeded = next(m for m in data["markets"] if m["market_id"] == market_ids[0])
+
+    assert seeded["current_prob"] == pytest.approx(0.60)
+    assert seeded["prob_30d_ago"] == pytest.approx(0.50)
+    assert seeded["volume_usd"] == pytest.approx(600000.0)
+
+
+def test_polymarket_agent_prepare_input_null_prob_when_no_db_row():
+    from agents.polymarket_agent import PolymarketAgent
+
+    db = _make_engine()
+    agent = PolymarketAgent()
+    data = agent.prepare_input(datetime.date(2024, 6, 7), db)
+
+    # No DB rows seeded — all markets should have null current_prob
+    for m in data["markets"]:
+        assert m["current_prob"] is None
+
+
+def test_polymarket_agent_run_writes_10_signal_rows():
+    from agents.polymarket_agent import PolymarketAgent
+
+    db = _make_engine()
+    date = datetime.date(2024, 6, 7)
+
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
+        return _llm_response(_FULL_POLY_SIGNAL)
+
+    agent = PolymarketAgent(cache=fake_cache)
+    result = agent.run(date, db)
+
+    assert result["time_horizon"] == "medium"
+    assert result["overall_confidence"] == pytest.approx(0.62)
+
+    with Session(db) as s:
+        rows = s.query(Signal).filter_by(agent_name="events", date=date).all()
+
+    assert len(rows) == 10
+    targets = {r.target for r in rows}
+    assert targets == set(_ALL_SECTORS)
+
+    xlk = next(r for r in rows if r.target == "XLK")
+    assert xlk.signal_value == pytest.approx(0.18)
+    assert xlk.confidence == pytest.approx(0.62)
+
+
+def test_polymarket_agent_run_is_idempotent():
+    from agents.polymarket_agent import PolymarketAgent
+
+    db = _make_engine()
+    date = datetime.date(2024, 6, 7)
+
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
+        return _llm_response(_FULL_POLY_SIGNAL)
+
+    agent = PolymarketAgent(cache=fake_cache)
+    agent.run(date, db)
+    agent.run(date, db)
+
+    with Session(db) as s:
+        rows = s.query(Signal).filter_by(agent_name="events", date=date).all()
+
+    assert len(rows) == 10  # not 20

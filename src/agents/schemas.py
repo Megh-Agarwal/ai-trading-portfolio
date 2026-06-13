@@ -42,13 +42,18 @@ class MacroRegimeSignal(BaseModel):
 class PolymarketSignal(BaseModel):
     """Output schema for the prediction-market events agent.
 
-    implied_prob maps market_id -> YES probability (0–1).
-    sector_impacts maps ETF ticker -> net directional impact (-1 to 1).
+    implied_prob maps market_id -> current YES probability (0–1).
+    sector_impacts maps ETF ticker -> aggregate tilt (-1 to 1) across all markets.
+    driving_events maps ETF ticker -> list of market questions that drive the tilt.
+    overall_confidence: model's confidence in the sector tilt assignments.
+    time_horizon: e.g. "short" / "medium" / "long".
     """
 
     implied_prob: dict[str, float]
     sector_impacts: dict[str, float]
+    driving_events: dict[str, list[str]]
     time_horizon: str
+    overall_confidence: float = Field(ge=0.0, le=1.0)
 
     @field_validator("implied_prob")
     @classmethod
