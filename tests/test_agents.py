@@ -1,4 +1,4 @@
-"""Smoke tests for BaseAgent and the three agent output schemas."""
+"""Smoke tests for BaseAgent, the three agent output schemas, and NewsAgent."""
 from __future__ import annotations
 
 import datetime
@@ -8,6 +8,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 from sqlalchemy import create_engine
 
 from agents.base import BaseAgent
@@ -275,3 +277,120 @@ def test_run_returns_validated_dict(prompt_file):
     result = agent.run(datetime.date(2024, 1, 15), db)
 
     assert set(result.keys()) == {"sector_sentiments", "conviction", "key_themes"}
+
+
+# ---------------------------------------------------------------------------
+# NewsAgent
+# ---------------------------------------------------------------------------
+
+_ALL_SECTORS = ["XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU"]
+
+_FULL_NEWS_SIGNAL = {
+    "sector_sentiments": {s: 0.0 for s in _ALL_SECTORS} | {"XLK": 0.6, "XLE": -0.4},
+    "conviction": 0.55,
+    "key_themes": ["AI spending accelerating", "oil supply surplus emerging", "rate cut expectations easing"],
+}
+
+
+def _seed_news(db, sectors: list[str], date: datetime.date) -> None:
+    """Insert minimal news_raw rows so prepare_input returns non-empty results."""
+    from db.models import NewsRaw
+
+    ts = datetime.datetime.combine(date - datetime.timedelta(days=2), datetime.time(12, 0))
+    with Session(db) as s:
+        for sector in sectors:
+            s.add(NewsRaw(ticker="AAA", sector=sector, timestamp=ts, title=f"{sector} headline"))
+        s.commit()
+
+
+def test_news_agent_uses_haiku_model():
+    from agents.news_agent import NewsAgent
+
+    agent = NewsAgent()
+    assert "haiku" in agent._model.lower()
+
+
+def test_news_agent_prepare_input_returns_all_sectors(tmp_path):
+    from agents.news_agent import NewsAgent
+
+    db = _make_engine()
+    date = datetime.date(2024, 6, 7)
+    _seed_news(db, _ALL_SECTORS[:3], date)
+
+    agent = NewsAgent()
+    data = agent.prepare_input(date, db)
+
+    assert data["analysis_date"] == "2024-06-07"
+    assert set(data["sectors"].keys()) == set(_ALL_SECTORS)
+    # seeded sectors have articles; others are empty lists
+    assert len(data["sectors"]["XLK"]) == 1
+    assert data["sectors"]["XLU"] == []
+
+
+def test_news_agent_prepare_input_ignores_articles_outside_window():
+    from agents.news_agent import NewsAgent
+
+    db = _make_engine()
+    date = datetime.date(2024, 6, 7)
+    # Insert article 10 days before analysis_date — outside the 7-day window
+    old_ts = datetime.datetime.combine(date - datetime.timedelta(days=10), datetime.time(12, 0))
+    with Session(db) as s:
+        from db.models import NewsRaw
+        s.add(NewsRaw(ticker="AAA", sector="XLK", timestamp=old_ts, title="Old headline"))
+        s.commit()
+
+    agent = NewsAgent()
+    data = agent.prepare_input(date, db)
+    assert data["sectors"]["XLK"] == []
+
+
+def test_news_agent_run_writes_10_signal_rows():
+    from agents.news_agent import NewsAgent
+
+    db = _make_engine()
+    date = datetime.date(2024, 6, 7)
+    _seed_news(db, _ALL_SECTORS, date)
+
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
+        return _llm_response(_FULL_NEWS_SIGNAL)
+
+    agent = NewsAgent(cache=fake_cache)
+    result = agent.run(date, db)
+
+    assert result["conviction"] == pytest.approx(0.55)
+
+    with Session(db) as s:
+        rows = s.query(Signal).filter_by(agent_name="sentiment", date=date).all()
+
+    assert len(rows) == 10
+    targets = {r.target for r in rows}
+    assert targets == set(_ALL_SECTORS)
+    xlk = next(r for r in rows if r.target == "XLK")
+    assert xlk.signal_value == pytest.approx(0.6)
+    assert xlk.confidence == pytest.approx(0.55)
+
+
+def test_news_agent_run_is_idempotent():
+    """Re-running the agent for the same date replaces prior signals, not duplicates."""
+    from agents.news_agent import NewsAgent
+
+    db = _make_engine()
+    date = datetime.date(2024, 6, 7)
+    _seed_news(db, _ALL_SECTORS, date)
+
+    call_count = 0
+
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
+        nonlocal call_count
+        call_count += 1
+        return _llm_response(_FULL_NEWS_SIGNAL)
+
+    agent = NewsAgent(cache=fake_cache)
+    agent.run(date, db)
+    agent.run(date, db)
+
+    with Session(db) as s:
+        rows = s.query(Signal).filter_by(agent_name="sentiment", date=date).all()
+
+    # Still exactly 10 rows, not 20
+    assert len(rows) == 10
