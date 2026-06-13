@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import datetime
 import logging
 import sys
@@ -30,6 +31,23 @@ _BACKTEST_MONTHS = 12
 _MIN_ACCEPTABLE_MONTHS = 10  # flag if Finnhub returns less than this
 
 
+def _make_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Ingest Finnhub company news into news_raw.")
+    p.add_argument(
+        "--since-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Only fetch articles from the last N days (e.g. 7 for a weekly refresh). "
+            "Skips the historical-depth validation and monthly chunking — "
+            "a single API call per ticker covers the short window. "
+            "Omit to run a full historical backfill (default: %(default)s → %(const)s months)."
+        ),
+    )
+    return p
+
+
 def _month_ranges(
     start: datetime.date, end: datetime.date
 ) -> list[tuple[datetime.date, datetime.date]]:
@@ -46,12 +64,54 @@ def _month_ranges(
 
 
 def main() -> None:
+    args = _make_parser().parse_args()
     end = datetime.date.today()
-    start = end - datetime.timedelta(days=_BACKTEST_MONTHS * 31)
 
     # -------------------------------------------------------------------
+    # Weekly refresh mode: --since-days N
+    # One call per ticker, no depth validation, no monthly chunking.
+    # -------------------------------------------------------------------
+    if args.since_days is not None:
+        start = end - datetime.timedelta(days=args.since_days)
+        logger.info(
+            "Weekly refresh mode: fetching last %d days (%s → %s)",
+            args.since_days, start, end,
+        )
+        holdings = load_holdings()
+        init_db(_DB_PATH)
+        engine = create_engine(f"sqlite:///{_DB_PATH}")
+
+        total_articles = 0
+        total_calls = 0
+
+        for etf, tickers in holdings.items():
+            etf_articles = 0
+            for ticker in tickers:
+                try:
+                    articles = fetch_company_news(ticker, start, end)
+                    n = write_news(articles, sector=etf, engine=engine)
+                    etf_articles += n
+                    total_articles += n
+                    total_calls += 1
+                    logger.debug("%s: %d articles (%d new)", ticker, len(articles), n)
+                except Exception as exc:
+                    logger.error("Failed %s: %s", ticker, exc)
+            logger.info("%s: %d new articles ingested", etf, etf_articles)
+
+        est_minutes = (total_calls * _CALL_INTERVAL) / 60
+        logger.info(
+            "Done — %d new articles from %d API calls (~%.0f min wall time)",
+            total_articles, total_calls, est_minutes,
+        )
+        engine.dispose()
+        return
+
+    # -------------------------------------------------------------------
+    # Full historical backfill mode (default, no --since-days)
     # Step 1: Validate historical depth before committing to full backfill
     # -------------------------------------------------------------------
+    start = end - datetime.timedelta(days=_BACKTEST_MONTHS * 31)
+
     logger.info("Validating Finnhub historical depth for AAPL...")
     depth = validate_historical_depth(ticker="AAPL", months=14)
     logger.info("Finnhub historical depth: ~%d months", depth)

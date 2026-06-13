@@ -120,3 +120,13 @@ Each entry: date, context, decision, consequences.
 **Consequences:** The YAML is the source of truth for Agent 1 — if Yahoo Finance's funds data is stale or unavailable, the cached YAML still works. The validation step in `update_holdings.py` logs any cross-sector overlap so analysts can decide whether to deduplicate. If yfinance changes its `funds_data` API, the scraper is a one-file change.
 
 ---
+
+## ADR-010 — Alpha Vantage as primary historical news source alongside Finnhub
+
+**Date:** 2026-06-13
+
+**Context:** The Finnhub free tier ignores the `_from` date parameter on the company_news endpoint and returns only the last ~5 days of articles regardless of the requested range. This was discovered when `validate_historical_depth` consistently returned 0 months even for AAPL. The 12-18 month backtest window requires genuinely historical news. Alpha Vantage's NEWS_SENTIMENT endpoint (free tier: 25 calls/day) honors date range parameters and returns articles going back ~2 years.
+
+**Decision:** Add `src/ingestion/alpha_vantage_news.py` as a parallel adapter. Keep `src/ingestion/news.py` (Finnhub) unchanged — it correctly captures recent articles and may be useful for forward paper-trading updates. The AV adapter batches all 10 constituent tickers per ETF into one API call (10 calls total for the full universe), staying well within the 25 calls/day free tier limit. Fan-out logic in `fetch_av_news` creates one NewsRaw row per (article, matched-ticker) pair, so an article covering both AAPL and MSFT produces two rows. `write_av_news` deduplicates on (url, ticker) pairs rather than url alone, because the same article legitimately maps to multiple tickers.
+
+**Consequences:** The `news_raw` table now receives data from two sources (source column distinguishes them). Historical backfill uses AV; ongoing collection can use either. Free tier caps at 200 articles per call — sectors with high news volume may see truncation over an 18-month window; a warning is logged when this occurs. Upgrading to AV premium raises the limit to 1000 per call. `ALPHA_VANTAGE_API_KEY` added to `.env.example`.

@@ -11,7 +11,7 @@
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  Ingestion layer                                             │
-│  yfinance · FRED · Finnhub · Polymarket  ──▶  SQLite cache  │
+│  yfinance · FRED · Alpha Vantage · Finnhub · Polymarket  ──▶  SQLite cache  │
 └────────────────────────┬─────────────────────────────────────┘
                          │
           ┌──────────────▼──────────────┐
@@ -64,6 +64,7 @@ uv run python scripts/init_db.py
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) |
 | `FRED_API_KEY` | [fred.stlouisfed.org/docs/api](https://fred.stlouisfed.org/docs/api/api_key.html) |
 | `FINNHUB_API_KEY` | [finnhub.io/dashboard](https://finnhub.io/dashboard) |
+| `ALPHA_VANTAGE_API_KEY` | [alphavantage.co](https://www.alphavantage.co/support/#api-key) — primary historical news source |
 
 ---
 
@@ -77,7 +78,7 @@ agentic-portfolio/
 ├── prompts/         # Versioned prompt templates (one per agent)
 ├── scripts/         # CLI entrypoints (init_db, ingest_*, run_weekly)
 ├── src/
-│   ├── ingestion/   # Data pulls: yfinance, FRED, Finnhub, Polymarket
+│   ├── ingestion/   # Data pulls: yfinance, FRED, Alpha Vantage, Finnhub, Polymarket
 │   ├── agents/      # LLM agents + base class + Pydantic output schemas
 │   ├── aggregator/  # Merge agent views into BL Q and Omega matrices
 │   ├── optimizer/   # Equilibrium returns, BL math, CVXPY optimization
