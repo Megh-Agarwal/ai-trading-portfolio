@@ -25,6 +25,10 @@ from pathlib import Path
 # Allow running from the repo root without installing the package.
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import anthropic
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
@@ -73,7 +77,7 @@ def _call_with_input(agent: NewsAgent, input_data: dict, db) -> dict:
         client = anthropic.Anthropic()
         message = client.messages.create(
             model=agent._model,
-            max_tokens=agent._max_tokens,
+            max_tokens=4096,
             temperature=agent._temperature,
             system=agent._prompt,
             tools=[agent._tool],

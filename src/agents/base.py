@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from cache import cached_call as _default_cached_call
 from db.models import AgentCall, Signal
+from exceptions import TruncationError
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,20 @@ class BaseAgent(ABC):
             engine=db,
             tool=self._tool,
         )
+
+        stop_reason = response.get("stop_reason")
+        if stop_reason == "max_tokens":
+            tokens_out = response.get("usage", {}).get("output_tokens", "?")
+            logger.warning(
+                "agent=%s date=%s hit max_tokens limit (output_tokens=%s) — response truncated",
+                self.agent_name,
+                date,
+                tokens_out,
+            )
+            raise TruncationError(
+                f"agent={self.agent_name} date={date} truncated at {tokens_out} output tokens "
+                f"(max_tokens={self._max_tokens}). Raise max_tokens in agents.yaml."
+            )
 
         validated = self.validate_output(response)
         call_id = self._last_call_id(db)

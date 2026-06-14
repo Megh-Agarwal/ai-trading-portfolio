@@ -1,0 +1,18 @@
+[
+  {
+    "date": "2026-06-12",
+    "sector": "XLK",
+    "real_sentiment": 0.55,
+    "no_news_sentiment": 0.0,
+    "counterfactual_sentiment": -0.75,
+    "reacts_to_news": true
+  },
+  {
+    "date": "2026-06-13",
+    "sector": "XLU",
+    "real_sentiment": 0.5,
+    "no_news_sentiment": 0.0,
+    "counterfactual_sentiment": -0.6,
+    "reacts_to_news": true
+  }
+]
