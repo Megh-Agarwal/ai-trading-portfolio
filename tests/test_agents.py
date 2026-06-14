@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import datetime
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -10,7 +9,6 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from sqlalchemy import create_engine
 
 from agents.base import BaseAgent
 from agents.schemas import MacroRegimeSignal, NewsSignal, PolymarketSignal
@@ -28,11 +26,11 @@ def _make_engine():
     return eng
 
 
-def _llm_response(payload: dict) -> dict:
-    """Wrap a dict as a minimal Anthropic-shaped response."""
+def _tool_response(payload: dict, tool_name: str = "fake_tool") -> dict:
+    """Wrap a dict as a minimal Anthropic tool-use response."""
     return {
         "id": "msg_test",
-        "content": [{"type": "text", "text": json.dumps(payload)}],
+        "content": [{"type": "tool_use", "id": "call_123", "name": tool_name, "input": payload}],
         "model": "claude-haiku-4-5-20251001",
         "usage": {"input_tokens": 100, "output_tokens": 50},
     }
@@ -46,21 +44,23 @@ def _llm_response(payload: dict) -> dict:
 class _FakeAgent(BaseAgent):
     agent_name = "fake"
     _schema_class = NewsSignal
+    _tool = {
+        "name": "fake_tool",
+        "description": "test tool",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    }
 
     def prepare_input(self, date: datetime.date, db) -> dict:
         return {"date": str(date)}
 
     def _write_signals(self, date, validated, call_id, db) -> None:
-        from sqlalchemy.orm import Session
-        from db.models import Signal
-
         rows = [
             Signal(
                 date=date,
                 agent_name=self.agent_name,
                 target=sector,
                 signal_value=sentiment,
-                confidence=validated["conviction"],
+                confidence=validated["sector_conviction"].get(sector, 0.0),
                 raw_call_id=call_id,
             )
             for sector, sentiment in validated["sector_sentiments"].items()
@@ -71,7 +71,7 @@ class _FakeAgent(BaseAgent):
 @pytest.fixture()
 def prompt_file(tmp_path) -> Path:
     p = tmp_path / "prompt.txt"
-    p.write_text("You are a trading agent. Return JSON.")
+    p.write_text("You are a trading agent.")
     return p
 
 
@@ -96,16 +96,17 @@ def test_base_agent_raises_on_missing_prompt():
 
 _VALID_NEWS = {
     "sector_sentiments": {"XLK": 0.8, "XLF": -0.3, "XLV": 0.0},
-    "conviction": 0.75,
-    "key_themes": ["rate hike fears", "AI spending boom"],
+    "sector_conviction": {"XLK": 0.75, "XLF": 0.6, "XLV": 0.0},
+    "key_themes": ["rate hike fears", "AI spending boom", "energy volatility"],
+    "evidence": [{"sector": "XLK", "headline": "Nvidia beats expectations", "impact": "positive for tech"}],
 }
 
 
 def test_news_signal_valid():
     sig = NewsSignal.model_validate(_VALID_NEWS)
     assert sig.sector_sentiments["XLK"] == 0.8
-    assert sig.conviction == 0.75
-    assert len(sig.key_themes) == 2
+    assert sig.sector_conviction["XLK"] == 0.75
+    assert len(sig.key_themes) == 3
 
 
 def test_news_signal_sentiment_out_of_range():
@@ -115,14 +116,14 @@ def test_news_signal_sentiment_out_of_range():
 
 
 def test_news_signal_conviction_out_of_range():
-    bad = {**_VALID_NEWS, "conviction": 1.1}
-    with pytest.raises(ValidationError):
+    bad = {**_VALID_NEWS, "sector_conviction": {"XLK": 1.1}}
+    with pytest.raises(ValidationError, match="out of"):
         NewsSignal.model_validate(bad)
 
 
 def test_news_signal_missing_field():
     with pytest.raises(ValidationError):
-        NewsSignal.model_validate({"conviction": 0.5, "key_themes": []})
+        NewsSignal.model_validate({"sector_conviction": {"XLK": 0.5}, "key_themes": [], "evidence": []})
 
 
 # ---------------------------------------------------------------------------
@@ -170,9 +171,13 @@ def test_macro_signal_confidence_out_of_range():
 _ALL_SECTORS = ["XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU"]
 
 _VALID_POLY = {
-    "implied_prob": {"609655": 0.72, "612300": 0.35},
-    "sector_impacts": {"XLF": 0.5, "XLU": -0.3},
-    "driving_events": {"XLF": ["Fed rate cut by July 2026?"], "XLU": ["US recession by end of 2026?"]},
+    "judgments": "No unusual correlations or context overrides.",
+    "implied_probs": {"609655": 0.72, "612300": 0.35},
+    "sector_tilts": {s: 0.0 for s in _ALL_SECTORS} | {"XLF": 0.5, "XLU": -0.3},
+    "driving_events": [
+        {"sector": "XLF", "market_question": "Fed rate cut by July 2026?", "reasoning": "Rate cut positive for financials"},
+        {"sector": "XLU", "market_question": "US recession by end of 2026?", "reasoning": "Recession bearish for utilities"},
+    ],
     "time_horizon": "short",
     "overall_confidence": 0.6,
 }
@@ -180,20 +185,20 @@ _VALID_POLY = {
 
 def test_polymarket_signal_valid():
     sig = PolymarketSignal.model_validate(_VALID_POLY)
-    assert sig.implied_prob["609655"] == 0.72
-    assert sig.sector_impacts["XLF"] == 0.5
+    assert sig.implied_probs["609655"] == 0.72
+    assert sig.sector_tilts["XLF"] == 0.5
     assert sig.overall_confidence == 0.6
-    assert "XLF" in sig.driving_events
+    assert any(e["sector"] == "XLF" for e in sig.driving_events)
 
 
 def test_polymarket_signal_prob_out_of_range():
-    bad = {**_VALID_POLY, "implied_prob": {"609655": 1.05}}
+    bad = {**_VALID_POLY, "implied_probs": {"609655": 1.05}}
     with pytest.raises(ValidationError, match="out of"):
         PolymarketSignal.model_validate(bad)
 
 
 def test_polymarket_signal_impact_out_of_range():
-    bad = {**_VALID_POLY, "sector_impacts": {"XLF": -1.5}}
+    bad = {**_VALID_POLY, "sector_tilts": {**_VALID_POLY["sector_tilts"], "XLF": -1.5}}
     with pytest.raises(ValidationError, match="out of"):
         PolymarketSignal.model_validate(bad)
 
@@ -217,39 +222,45 @@ def test_polymarket_signal_missing_overall_confidence():
 
 def test_validate_output_parses_valid_response(prompt_file):
     agent = _FakeAgent("claude-haiku-4-5-20251001", prompt_file)
-    result = agent.validate_output(_llm_response(_VALID_NEWS))
-    assert result["conviction"] == 0.75
+    result = agent.validate_output(_tool_response(_VALID_NEWS))
+    assert result["sector_conviction"]["XLK"] == 0.75
     assert result["sector_sentiments"]["XLK"] == 0.8
 
 
-def test_validate_output_strips_markdown_fences(prompt_file):
+def test_validate_output_parses_attribute_style_tool_use_block(prompt_file):
+    """validate_output handles both dict blocks and object-attribute blocks."""
     agent = _FakeAgent("claude-haiku-4-5-20251001", prompt_file)
-    wrapped = {
-        "content": [{"type": "text", "text": f"```json\n{json.dumps(_VALID_NEWS)}\n```"}],
-        "usage": {"input_tokens": 10, "output_tokens": 10},
-    }
-    result = agent.validate_output(wrapped)
-    assert result["conviction"] == 0.75
+    block = MagicMock()
+    block.type = "tool_use"
+    block.input = _VALID_NEWS
+    response = {"content": [block], "usage": {"input_tokens": 10, "output_tokens": 10}}
+    result = agent.validate_output(response)
+    assert result["sector_conviction"]["XLK"] == 0.75
 
 
-def test_validate_output_raises_on_invalid_json(prompt_file):
+def test_validate_output_raises_when_no_tool_use_block(prompt_file):
     agent = _FakeAgent("claude-haiku-4-5-20251001", prompt_file)
-    bad_response = {"content": [{"type": "text", "text": "not json at all"}], "usage": {}}
-    with pytest.raises(ValueError, match="not valid JSON"):
-        agent.validate_output(bad_response)
-
-
-def test_validate_output_raises_on_schema_violation(prompt_file):
-    agent = _FakeAgent("claude-haiku-4-5-20251001", prompt_file)
-    bad_payload = {"sector_sentiments": {"XLK": 99.0}, "conviction": 0.5, "key_themes": []}
-    with pytest.raises(ValueError):
-        agent.validate_output(_llm_response(bad_payload))
+    text_only = {"content": [{"type": "text", "text": "some text, not a tool call"}], "usage": {}}
+    with pytest.raises(ValueError, match="no tool_use content block"):
+        agent.validate_output(text_only)
 
 
 def test_validate_output_raises_on_empty_content(prompt_file):
     agent = _FakeAgent("claude-haiku-4-5-20251001", prompt_file)
-    with pytest.raises(ValueError, match="no text content"):
+    with pytest.raises(ValueError, match="no tool_use content block"):
         agent.validate_output({"content": [], "usage": {}})
+
+
+def test_validate_output_raises_on_schema_violation(prompt_file):
+    agent = _FakeAgent("claude-haiku-4-5-20251001", prompt_file)
+    bad_payload = {
+        "sector_sentiments": {"XLK": 99.0},
+        "sector_conviction": {"XLK": 0.5},
+        "key_themes": [],
+        "evidence": [],
+    }
+    with pytest.raises(ValueError):
+        agent.validate_output(_tool_response(bad_payload))
 
 
 # ---------------------------------------------------------------------------
@@ -260,15 +271,14 @@ def test_validate_output_raises_on_empty_content(prompt_file):
 def test_run_writes_signals_to_db(prompt_file):
     db = _make_engine()
 
-    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
-        return _llm_response(_VALID_NEWS)
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine, tool=None):
+        return _tool_response(_VALID_NEWS)
 
     agent = _FakeAgent("claude-haiku-4-5-20251001", prompt_file, cache=fake_cache)
     result = agent.run(datetime.date(2024, 1, 15), db)
 
-    assert result["conviction"] == 0.75
+    assert result["sector_conviction"]["XLK"] == 0.75
 
-    from sqlalchemy.orm import Session
     with Session(db) as s:
         rows = s.query(Signal).all()
 
@@ -283,25 +293,27 @@ def test_run_writes_signals_to_db(prompt_file):
 def test_run_returns_validated_dict(prompt_file):
     db = _make_engine()
 
-    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
-        return _llm_response(_VALID_NEWS)
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine, tool=None):
+        return _tool_response(_VALID_NEWS)
 
     agent = _FakeAgent("claude-haiku-4-5-20251001", prompt_file, cache=fake_cache)
     result = agent.run(datetime.date(2024, 1, 15), db)
 
-    assert set(result.keys()) == {"sector_sentiments", "conviction", "key_themes"}
+    assert set(result.keys()) == {"sector_sentiments", "sector_conviction", "key_themes", "evidence"}
 
 
 # ---------------------------------------------------------------------------
 # NewsAgent
 # ---------------------------------------------------------------------------
 
-_ALL_SECTORS = ["XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU"]
-
 _FULL_NEWS_SIGNAL = {
     "sector_sentiments": {s: 0.0 for s in _ALL_SECTORS} | {"XLK": 0.6, "XLE": -0.4},
-    "conviction": 0.55,
+    "sector_conviction": {s: 0.1 for s in _ALL_SECTORS} | {"XLK": 0.55, "XLE": 0.5},
     "key_themes": ["AI spending accelerating", "oil supply surplus emerging", "rate cut expectations easing"],
+    "evidence": [
+        {"sector": "XLK", "headline": "Nvidia Q1 beats on AI demand", "impact": "positive"},
+        {"sector": "XLE", "headline": "OPEC+ agrees to output increase", "impact": "negative"},
+    ],
 }
 
 
@@ -335,7 +347,6 @@ def test_news_agent_prepare_input_returns_all_sectors(tmp_path):
 
     assert data["analysis_date"] == "2024-06-07"
     assert set(data["sectors"].keys()) == set(_ALL_SECTORS)
-    # seeded sectors have articles; others are empty lists
     assert len(data["sectors"]["XLK"]) == 1
     assert data["sectors"]["XLU"] == []
 
@@ -345,7 +356,6 @@ def test_news_agent_prepare_input_ignores_articles_outside_window():
 
     db = _make_engine()
     date = datetime.date(2024, 6, 7)
-    # Insert article 10 days before analysis_date — outside the 7-day window
     old_ts = datetime.datetime.combine(date - datetime.timedelta(days=10), datetime.time(12, 0))
     with Session(db) as s:
         from db.models import NewsRaw
@@ -364,13 +374,13 @@ def test_news_agent_run_writes_10_signal_rows():
     date = datetime.date(2024, 6, 7)
     _seed_news(db, _ALL_SECTORS, date)
 
-    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
-        return _llm_response(_FULL_NEWS_SIGNAL)
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine, tool=None):
+        return _tool_response(_FULL_NEWS_SIGNAL, "report_sector_sentiment")
 
     agent = NewsAgent(cache=fake_cache)
     result = agent.run(date, db)
 
-    assert result["conviction"] == pytest.approx(0.55)
+    assert result["sector_conviction"]["XLK"] == pytest.approx(0.55)
 
     with Session(db) as s:
         rows = s.query(Signal).filter_by(agent_name="sentiment", date=date).all()
@@ -391,12 +401,8 @@ def test_news_agent_run_is_idempotent():
     date = datetime.date(2024, 6, 7)
     _seed_news(db, _ALL_SECTORS, date)
 
-    call_count = 0
-
-    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
-        nonlocal call_count
-        call_count += 1
-        return _llm_response(_FULL_NEWS_SIGNAL)
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine, tool=None):
+        return _tool_response(_FULL_NEWS_SIGNAL, "report_sector_sentiment")
 
     agent = NewsAgent(cache=fake_cache)
     agent.run(date, db)
@@ -405,7 +411,6 @@ def test_news_agent_run_is_idempotent():
     with Session(db) as s:
         rows = s.query(Signal).filter_by(agent_name="sentiment", date=date).all()
 
-    # Still exactly 10 rows, not 20
     assert len(rows) == 10
 
 
@@ -457,7 +462,6 @@ def _seed_macro(db, date: datetime.date) -> None:
         for sid, val in series_values.items():
             rows.append(Macro(date=d, series_id=sid, value=val))
 
-    # Seed CPI 12 months back for YoY calculation
     for days_back in range(360, 400):
         d = date - datetime.timedelta(days=days_back)
         rows.append(Macro(date=d, series_id="CPIAUCSL", value=295.0))
@@ -494,7 +498,8 @@ def test_macro_agent_prepare_input_returns_derived_features():
     assert "icsa_current" in features
 
 
-def test_macro_agent_prepare_input_series_30d_keys():
+def test_macro_agent_prepare_input_no_series_30d():
+    """series_30d was removed from the MacroAgent input to save ~1500 tokens per call."""
     from agents.macro_agent import MacroAgent
 
     db = _make_engine()
@@ -504,12 +509,7 @@ def test_macro_agent_prepare_input_series_30d_keys():
     agent = MacroAgent()
     data = agent.prepare_input(date, db)
 
-    # All 7 FRED series should be present
-    assert set(data["series_30d"].keys()) == {
-        "VIXCLS", "T10Y2Y", "DGS10", "DTWEXBGS", "CPIAUCSL", "UNRATE", "ICSA"
-    }
-    # 30 days of daily data
-    assert len(data["series_30d"]["VIXCLS"]) == 31  # 0..30 inclusive
+    assert "series_30d" not in data
 
 
 def test_macro_agent_prepare_input_empty_db_returns_empty_features():
@@ -520,7 +520,7 @@ def test_macro_agent_prepare_input_empty_db_returns_empty_features():
     data = agent.prepare_input(datetime.date(2024, 6, 7), db)
 
     assert data["derived_features"] == {}
-    assert data["series_30d"] == {}
+    assert "series_30d" not in data
 
 
 def test_macro_agent_run_writes_2_signal_rows():
@@ -530,8 +530,8 @@ def test_macro_agent_run_writes_2_signal_rows():
     date = datetime.date(2024, 6, 7)
     _seed_macro(db, date)
 
-    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
-        return _llm_response(_VALID_MACRO_SIGNAL)
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine, tool=None):
+        return _tool_response(_VALID_MACRO_SIGNAL, "report_macro_regime")
 
     agent = MacroAgent(cache=fake_cache)
     result = agent.run(date, db)
@@ -560,8 +560,8 @@ def test_macro_agent_run_is_idempotent():
     date = datetime.date(2024, 6, 7)
     _seed_macro(db, date)
 
-    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
-        return _llm_response(_VALID_MACRO_SIGNAL)
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine, tool=None):
+        return _tool_response(_VALID_MACRO_SIGNAL, "report_macro_regime")
 
     agent = MacroAgent(cache=fake_cache)
     agent.run(date, db)
@@ -570,7 +570,6 @@ def test_macro_agent_run_is_idempotent():
     with Session(db) as s:
         rows = s.query(Signal).filter_by(agent_name="macro", date=date).all()
 
-    # 2 rows, not 4
     assert len(rows) == 2
 
 
@@ -579,14 +578,15 @@ def test_macro_agent_run_is_idempotent():
 # ---------------------------------------------------------------------------
 
 _FULL_POLY_SIGNAL = {
-    "implied_prob": {"609655": 0.28, "1439536": 0.71},
-    "sector_impacts": {s: 0.0 for s in _ALL_SECTORS} | {"XLK": 0.18, "XLF": -0.08, "XLY": 0.28, "XLRE": 0.18},
-    "driving_events": {
-        "XLK": ["Fed rate cut by July 2026 meeting?"],
-        "XLF": ["Fed rate cut by July 2026 meeting?"],
-        "XLY": ["Fed rate cut by July 2026 meeting?", "US recession by end of 2026?"],
-        "XLRE": ["Fed rate cut by July 2026 meeting?"],
-    },
+    "judgments": "No unusual context. Volumes are sufficient on both markets.",
+    "implied_probs": {"609655": 0.28, "1439536": 0.71},
+    "sector_tilts": {s: 0.0 for s in _ALL_SECTORS} | {"XLK": 0.18, "XLF": -0.08, "XLY": 0.28, "XLRE": 0.18},
+    "driving_events": [
+        {"sector": "XLK", "market_question": "Fed rate cut by July 2026 meeting?", "reasoning": "Rate cuts boost tech valuations"},
+        {"sector": "XLF", "market_question": "Fed rate cut by July 2026 meeting?", "reasoning": "Rate cuts compress net interest margins"},
+        {"sector": "XLY", "market_question": "Fed rate cut by July 2026 meeting?", "reasoning": "Rate cuts boost consumer discretionary"},
+        {"sector": "XLRE", "market_question": "Fed rate cut by July 2026 meeting?", "reasoning": "Rate cuts reduce REIT discount rates"},
+    ],
     "time_horizon": "medium",
     "overall_confidence": 0.62,
 }
@@ -629,7 +629,6 @@ def test_polymarket_agent_prepare_input_structure():
     date = datetime.date(2024, 6, 7)
 
     agent = PolymarketAgent()
-    # Seed two of the curated market IDs
     market_ids = [m["market_id"] for m in agent._curated[:2]]
     _seed_polymarket(db, market_ids, date)
 
@@ -637,7 +636,6 @@ def test_polymarket_agent_prepare_input_structure():
 
     assert data["analysis_date"] == "2024-06-07"
     assert "markets" in data
-    # All curated markets should appear in the input (even those with no DB row)
     assert len(data["markets"]) == len(agent._curated)
 
 
@@ -666,7 +664,6 @@ def test_polymarket_agent_prepare_input_null_prob_when_no_db_row():
     agent = PolymarketAgent()
     data = agent.prepare_input(datetime.date(2024, 6, 7), db)
 
-    # No DB rows seeded — all markets should have null current_prob
     for m in data["markets"]:
         assert m["current_prob"] is None
 
@@ -677,8 +674,8 @@ def test_polymarket_agent_run_writes_10_signal_rows():
     db = _make_engine()
     date = datetime.date(2024, 6, 7)
 
-    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
-        return _llm_response(_FULL_POLY_SIGNAL)
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine, tool=None):
+        return _tool_response(_FULL_POLY_SIGNAL, "report_polymarket_tilts")
 
     agent = PolymarketAgent(cache=fake_cache)
     result = agent.run(date, db)
@@ -704,8 +701,8 @@ def test_polymarket_agent_run_is_idempotent():
     db = _make_engine()
     date = datetime.date(2024, 6, 7)
 
-    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine):
-        return _llm_response(_FULL_POLY_SIGNAL)
+    def fake_cache(model, prompt, input_data, call_fn, *, agent_name, engine, tool=None):
+        return _tool_response(_FULL_POLY_SIGNAL, "report_polymarket_tilts")
 
     agent = PolymarketAgent(cache=fake_cache)
     agent.run(date, db)
@@ -714,4 +711,4 @@ def test_polymarket_agent_run_is_idempotent():
     with Session(db) as s:
         rows = s.query(Signal).filter_by(agent_name="events", date=date).all()
 
-    assert len(rows) == 10  # not 20
+    assert len(rows) == 10

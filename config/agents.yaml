@@ -1,7 +1,7 @@
 agents:
   sentiment:
     model: claude-haiku-4-5-20251001
-    prompt_template: prompts/sentiment.txt
+    prompt_template: prompts/news_sentiment.txt
     max_tokens: 1024
     temperature: 0.0
 

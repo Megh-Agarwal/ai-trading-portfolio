@@ -27,6 +27,7 @@ class BaseAgent(ABC):
     Subclasses must set:
         agent_name: str          — matches key in agents.yaml and agent_calls table
         _schema_class: type      — Pydantic model class for validate_output
+        _tool: dict              — Anthropic tool definition (name, description, input_schema)
 
     Subclasses must implement:
         prepare_input(date, db) -> dict
@@ -35,6 +36,7 @@ class BaseAgent(ABC):
 
     agent_name: str
     _schema_class: type
+    _tool: dict
 
     def __init__(
         self,
@@ -57,18 +59,10 @@ class BaseAgent(ABC):
 
     @abstractmethod
     def prepare_input(self, date: datetime.date, db: Engine) -> dict:
-        """Collect and structure all input data for the LLM call.
-
-        Args:
-            date: The rebalance date being processed.
-            db: SQLAlchemy engine for querying historical data.
-
-        Returns:
-            JSON-serialisable dict passed to the LLM as user message content.
-        """
+        """Collect and structure all input data for the LLM call."""
 
     def validate_output(self, response: dict) -> dict:
-        """Parse and validate the LLM response against the agent's Pydantic schema.
+        """Extract and validate the LLM tool_use response against the agent's Pydantic schema.
 
         Args:
             response: Raw response dict from cached_call (Anthropic API shape).
@@ -77,40 +71,23 @@ class BaseAgent(ABC):
             Validated dict matching the agent's schema.
 
         Raises:
-            ValueError: JSON extraction fails or schema validation fails.
+            ValueError: No tool_use block found or schema validation fails.
         """
         content = response.get("content", [])
-        text = ""
+        tool_input = None
         for block in content:
-            # Handle both raw dicts (from cache) and SDK objects (live call).
             if isinstance(block, dict):
-                if block.get("type") == "text":
-                    text = block["text"]
+                if block.get("type") == "tool_use":
+                    tool_input = block.get("input")
                     break
-            elif hasattr(block, "type") and block.type == "text":
-                text = block.text
+            elif hasattr(block, "type") and block.type == "tool_use":
+                tool_input = block.input
                 break
 
-        if not text:
-            raise ValueError("LLM response contained no text content block")
+        if tool_input is None:
+            raise ValueError("LLM response contained no tool_use content block")
 
-        # Strip markdown code fences if the model wraps JSON in ```json ... ```.
-        stripped = text.strip()
-        if stripped.startswith("```"):
-            lines = stripped.split("\n")
-            inner = lines[1:] if len(lines) > 1 else lines
-            if inner and inner[-1].strip() == "```":
-                inner = inner[:-1]
-            stripped = "\n".join(inner)
-
-        try:
-            raw = json.loads(stripped)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"LLM output is not valid JSON: {exc}\n\nRaw text:\n{text}"
-            ) from exc
-
-        validated = self._schema_class.model_validate(raw)
+        validated = self._schema_class.model_validate(tool_input)
         return validated.model_dump()
 
     @abstractmethod
@@ -121,35 +98,21 @@ class BaseAgent(ABC):
         call_id: int | None,
         db: Engine,
     ) -> None:
-        """Write validated signal rows to the signals table.
-
-        Args:
-            date: Rebalance date.
-            validated: Output of validate_output().
-            call_id: FK to agent_calls row, or None if DB logging is disabled.
-            db: SQLAlchemy engine.
-        """
+        """Write validated signal rows to the signals table."""
 
     def run(self, date: datetime.date, db: Engine) -> dict:
-        """Full pipeline: prepare_input → cached LLM call → validate → write signals.
-
-        Args:
-            date: Rebalance date to process.
-            db: SQLAlchemy engine.
-
-        Returns:
-            Validated signal dict.
-        """
+        """Full pipeline: prepare_input → cached LLM tool call → validate → write signals."""
         input_data = self.prepare_input(date, db)
 
         def _call_fn() -> dict:
-            # anthropic.Anthropic() is only reached on a cache miss inside cached_call.
             client = anthropic.Anthropic()
             message = client.messages.create(
                 model=self._model,
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
                 system=self._prompt,
+                tools=[self._tool],
+                tool_choice={"type": "tool", "name": self._tool["name"]},
                 messages=[{"role": "user", "content": json.dumps(input_data, default=str)}],
             )
             return message.model_dump()
@@ -161,6 +124,7 @@ class BaseAgent(ABC):
             _call_fn,
             agent_name=self.agent_name,
             engine=db,
+            tool=self._tool,
         )
 
         validated = self.validate_output(response)

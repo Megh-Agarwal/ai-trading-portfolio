@@ -17,12 +17,48 @@ from db.models import Macro, NewsRaw, Signal
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "macro_regime.txt"
-
 # How far back to query macro data. 90 days for rolling averages; 400 for CPI YoY.
 _MACRO_LOOKBACK_DAYS = 400
 _NEWS_LOOKBACK_DAYS = 7
-_MAX_NEWS_ARTICLES = 10  # per sector
+_MAX_NEWS_ARTICLES = 10  # per sector in macro news digest
+
+_TOOL: dict = {
+    "name": "report_macro_regime",
+    "description": "Classify the current macroeconomic regime based on provided indicators",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "reasoning": {
+                "type": "string",
+                "description": (
+                    "Step-by-step analysis of the macro indicators, 150-300 words. "
+                    "Write this first before setting labels."
+                ),
+            },
+            "regime": {
+                "type": "string",
+                "enum": ["risk_on", "risk_off", "neutral"],
+                "description": "Current market regime",
+            },
+            "rate_outlook": {
+                "type": "string",
+                "enum": ["rising", "falling", "stable"],
+                "description": "Near-term rate direction",
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "0.8+ only when all indicators agree. 0.3-0.5 for mixed signals.",
+            },
+            "rationale": {
+                "type": "string",
+                "description": "2-3 sentence plain-English summary for a portfolio manager",
+            },
+        },
+        "required": ["reasoning", "regime", "rate_outlook", "confidence", "rationale"],
+    },
+}
 
 
 class MacroAgent(BaseAgent):
@@ -37,13 +73,15 @@ class MacroAgent(BaseAgent):
 
     agent_name = "macro"
     _schema_class = MacroRegimeSignal
+    _tool = _TOOL
 
     def __init__(self, cache=None) -> None:
         cfg = load_config("agents")
         agent_cfg = cfg.agents["macro"]
+        prompt_path = Path(__file__).parent.parent.parent / agent_cfg.prompt_template
         super().__init__(
             model_string=agent_cfg.model,
-            prompt_template_path=_PROMPT_PATH,
+            prompt_template_path=prompt_path,
             cache=cache,
             max_tokens=agent_cfg.max_tokens,
             temperature=agent_cfg.temperature,
@@ -53,16 +91,18 @@ class MacroAgent(BaseAgent):
         """Build structured macro input for the LLM.
 
         Queries:
-        - Last 90 days of all 7 FRED series (for time series + rolling stats)
-        - Last 400 days of CPIAUCSL (for YoY calculation)
+        - Last 400 days of all 7 FRED series (for derived features including CPI YoY)
         - Last 7 days of XLF + XLI news (macro news digest)
+
+        Raw 30-day time series are excluded — only pre-computed derived features
+        are passed to the LLM to reduce token usage (~1,500 tokens saved per call).
 
         Args:
             date: Rebalance date (inclusive upper bound).
             db: SQLAlchemy engine.
 
         Returns:
-            Dict with analysis_date, derived_features, series_30d, macro_news_digest.
+            Dict with analysis_date, derived_features, and macro_news_digest.
         """
         start_400d = date - datetime.timedelta(days=_MACRO_LOOKBACK_DAYS)
         start_90d = date - datetime.timedelta(days=90)
@@ -95,7 +135,6 @@ class MacroAgent(BaseAgent):
             )
 
         derived = _compute_derived_features(macro_rows, date, start_90d, start_30d)
-        series_30d = _format_series_30d(macro_rows, start_30d)
         news_digest = _format_news_digest(news_rows, _MAX_NEWS_ARTICLES)
 
         total_articles = sum(len(v) for v in news_digest.values())
@@ -109,7 +148,6 @@ class MacroAgent(BaseAgent):
         return {
             "analysis_date": date.isoformat(),
             "derived_features": derived,
-            "series_30d": series_30d,
             "macro_news_digest": news_digest,
         }
 
@@ -276,30 +314,6 @@ def _compute_derived_features(
         features["usd_index_30d_change"] = round(usd_30d_chg, 2)
 
     return features
-
-
-def _format_series_30d(rows: list, start_30d: datetime.date) -> dict[str, list[dict]]:
-    """Return last-30-day daily values per series as {series_id: [{date, value}, ...]}."""
-    if not rows:
-        return {}
-
-    cutoff = pd.Timestamp(start_30d)
-    result: dict[str, list[dict]] = {}
-
-    df = pd.DataFrame(
-        [(r.date, r.series_id, r.value) for r in rows],
-        columns=["date", "series_id", "value"],
-    )
-    df["date"] = pd.to_datetime(df["date"])
-    df = df[df["date"] >= cutoff].sort_values("date")
-
-    for sid, grp in df.groupby("series_id"):
-        result[str(sid)] = [
-            {"date": row.date.strftime("%Y-%m-%d"), "value": round(float(row.value), 4)}
-            for row in grp.itertuples(index=False)
-        ]
-
-    return result
 
 
 def _format_news_digest(rows: list, max_per_sector: int) -> dict[str, list[dict]]:

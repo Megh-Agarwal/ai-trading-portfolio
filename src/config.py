@@ -44,6 +44,24 @@ class AgentsConfig(BaseModel):
     agents: dict[str, AgentConfig]
 
 
+class AggregatorParams(BaseModel):
+    max_excess_return_annual: float = Field(gt=0)
+    omega_base: float = Field(gt=0)
+    regime_scale_intercept: float
+    regime_scale_slope: float
+
+
+class AgentWeights(BaseModel):
+    news: float = Field(ge=0, le=1)
+    macro: float = Field(ge=0, le=1)
+    polymarket: float = Field(ge=0, le=1)
+
+
+class AggregatorWeights(BaseModel):
+    backtest: AgentWeights
+    live: AgentWeights
+
+
 class OptimizerConfig(BaseModel):
     tau: float = Field(gt=0)
     risk_aversion: float = Field(gt=0)
@@ -51,6 +69,8 @@ class OptimizerConfig(BaseModel):
     vol_target: float = Field(gt=0, le=1)
     turnover_penalty: float = Field(ge=0)
     transaction_cost_bps: float = Field(ge=0)
+    aggregator: AggregatorParams
+    aggregator_weights: AggregatorWeights
 
 
 class BacktestConfig(BaseModel):

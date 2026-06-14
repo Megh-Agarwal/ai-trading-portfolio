@@ -11,3 +11,24 @@ vol_target: 0.12           # annualised portfolio volatility target
 # Transaction cost model
 turnover_penalty: 0.10     # L1 turnover penalty coefficient
 transaction_cost_bps: 10   # one-way cost in basis points
+
+# Aggregator signal-to-return mapping and regime scaling (ADR-011)
+# These are the primary backtest hyperparameters — change here, not in source.
+aggregator:
+  max_excess_return_annual: 0.05   # ±1 signal → ±5% annualised excess return
+  omega_base: 0.0001               # view variance at unit conviction (~1bp² weekly)
+  regime_scale_intercept: 0.75     # neutral regime multiplier
+  regime_scale_slope: 0.25         # risk_off→0.50, neutral→0.75, risk_on→1.00
+
+# Per-mode agent weights (ADR-012)
+# backtest: Polymarket has no historical data — weight redistributed to news+macro
+# live: full 3-agent weights once Polymarket ingest catches up
+aggregator_weights:
+  backtest:
+    news: 0.57
+    macro: 0.43
+    polymarket: 0.00
+  live:
+    news: 0.40
+    macro: 0.30
+    polymarket: 0.30

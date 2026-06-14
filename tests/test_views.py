@@ -8,13 +8,13 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from aggregator.views import (
-    _MAX_EXCESS_RETURN_WEEKLY,
-    _MIN_CONVICTION,
-    _OMEGA_BASE,
-    build_views,
-)
+from aggregator.views import _MIN_CONVICTION, build_views
 from db.models import Base, Signal, View
+
+# These constants were moved to config/optimizer.yaml (ADR-012 / Blocker 2).
+# Test file keeps local copies matching the config defaults so arithmetic tests pass.
+_MAX_EXCESS_RETURN_WEEKLY: float = 0.05 / 52
+_OMEGA_BASE: float = 0.0001
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -387,4 +387,17 @@ class TestErrors:
                          signal_value=0.0, confidence=0.8))
             s.commit()
         q, _ = build_views(_DATE, db)
+        np.testing.assert_array_equal(q, 0.0)
+
+    def test_raises_if_weights_sum_exceeds_one(self):
+        db = _make_engine()
+        _seed_signals(db, news_signal=0.5, news_conv=0.8)
+        with pytest.raises(ValueError, match="weights must sum to"):
+            build_views(_DATE, db, weights={"news": 0.5, "macro": 0.5, "polymarket": 0.5})
+
+    def test_backtest_mode_ignores_polymarket_signal(self):
+        """In backtest mode polymarket weight=0.0 — poly_signal has no effect on Q."""
+        db = _make_engine()
+        _seed_signals(db, poly_signal=1.0, poly_conf=1.0)
+        q, _ = build_views(_DATE, db, mode="backtest")
         np.testing.assert_array_equal(q, 0.0)

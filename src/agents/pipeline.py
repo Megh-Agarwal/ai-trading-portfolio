@@ -92,6 +92,7 @@ def run_agent_pipeline(
     date: datetime.date,
     db: Engine,
     weights: dict[str, float] | None = None,
+    mode: str = "live",
 ) -> dict:
     """Run all three agents then build_views in sequence for `date`.
 
@@ -104,7 +105,9 @@ def run_agent_pipeline(
     Args:
         date: Rebalance date.  All DB signal rows will be for this date.
         db: SQLAlchemy engine.
-        weights: Agent weights forwarded to build_views.  None → default 40/30/30.
+        weights: Agent weights forwarded to build_views.  None → config defaults.
+        mode: "live" or "backtest". Forwarded to build_views for weight selection.
+              "backtest" sets polymarket weight to 0% (ADR-012).
 
     Returns:
         Summary dict with keys:
@@ -155,7 +158,7 @@ def run_agent_pipeline(
         logger.warning("%d agent(s) failed — neutral stubs written: %s", len(failed), failed)
 
     # ---- aggregator -------------------------------------------------------
-    q_arr, omega_arr = build_views(date, db, weights=weights)
+    q_arr, omega_arr = build_views(date, db, mode=mode, weights=weights)
 
     total_latency_ms = (time.monotonic() - pipeline_start) * 1000
     total_cost_usd = _cost_since(call_id_floor, db)

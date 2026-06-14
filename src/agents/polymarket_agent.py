@@ -17,8 +17,70 @@ from ingestion.polymarket import load_curated_markets
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "polymarket_events.txt"
 _LOOKBACK_DAYS = 30
+
+_TOOL: dict = {
+    "name": "report_polymarket_tilts",
+    "description": "Translate prediction market probabilities into sector portfolio tilts",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "judgments": {
+                "type": "string",
+                "description": (
+                    "Before calculating tilts, note any cases where mechanical application "
+                    "of the algorithm misses important context. E.g. correlated markets "
+                    "double-counting risk, or a low-volume market that deserves more weight "
+                    "due to recent news. Write this first."
+                ),
+            },
+            "implied_probs": {
+                "type": "object",
+                "description": "Market ID to current implied probability. Copy directly from input, do not modify.",
+                "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1},
+            },
+            "sector_tilts": {
+                "type": "object",
+                "properties": {
+                    "XLK": {"type": "number", "minimum": -1, "maximum": 1},
+                    "XLF": {"type": "number", "minimum": -1, "maximum": 1},
+                    "XLV": {"type": "number", "minimum": -1, "maximum": 1},
+                    "XLY": {"type": "number", "minimum": -1, "maximum": 1},
+                    "XLP": {"type": "number", "minimum": -1, "maximum": 1},
+                    "XLE": {"type": "number", "minimum": -1, "maximum": 1},
+                    "XLI": {"type": "number", "minimum": -1, "maximum": 1},
+                    "XLB": {"type": "number", "minimum": -1, "maximum": 1},
+                    "XLRE": {"type": "number", "minimum": -1, "maximum": 1},
+                    "XLU": {"type": "number", "minimum": -1, "maximum": 1},
+                },
+                "required": ["XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU"],
+            },
+            "driving_events": {
+                "type": "array",
+                "description": "Only sectors with |tilt| >= 0.05. List which market questions drove the tilt and why.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "sector": {"type": "string"},
+                        "market_question": {"type": "string"},
+                        "reasoning": {"type": "string"},
+                    },
+                    "required": ["sector", "market_question", "reasoning"],
+                },
+            },
+            "time_horizon": {
+                "type": "string",
+                "enum": ["short", "medium", "long"],
+            },
+            "overall_confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+            },
+        },
+        "required": ["judgments", "implied_probs", "sector_tilts", "driving_events", "time_horizon", "overall_confidence"],
+    },
+}
 
 
 class PolymarketAgent(BaseAgent):
@@ -31,13 +93,15 @@ class PolymarketAgent(BaseAgent):
 
     agent_name = "events"
     _schema_class = PolymarketSignal
+    _tool = _TOOL
 
     def __init__(self, cache=None) -> None:
         cfg = load_config("agents")
         agent_cfg = cfg.agents["events"]
+        prompt_path = Path(__file__).parent.parent.parent / agent_cfg.prompt_template
         super().__init__(
             model_string=agent_cfg.model,
-            prompt_template_path=_PROMPT_PATH,
+            prompt_template_path=prompt_path,
             cache=cache,
             max_tokens=agent_cfg.max_tokens,
             temperature=agent_cfg.temperature,
@@ -45,24 +109,7 @@ class PolymarketAgent(BaseAgent):
         self._curated = load_curated_markets()
 
     def prepare_input(self, date: datetime.date, db: Engine) -> dict:
-        """Build structured Polymarket input for the LLM.
-
-        For each curated market:
-        - Latest implied_prob from polymarket_raw up to `date`
-        - Earliest implied_prob in the 30-day window (as "30d ago" trend proxy)
-        - Volume, end_date, days_to_resolution from the latest snapshot
-        - Sector impacts and confidence_rating from the YAML config
-
-        Markets with no DB row are included with current_prob=null so the LLM
-        knows to treat them as data-absent.
-
-        Args:
-            date: Rebalance date (inclusive upper bound for DB queries).
-            db: SQLAlchemy engine.
-
-        Returns:
-            Dict with analysis_date and markets list.
-        """
+        """Build structured Polymarket input for the LLM."""
         date_dt = datetime.datetime.combine(date, datetime.time.max)
         start_30d_dt = datetime.datetime.combine(date - datetime.timedelta(days=_LOOKBACK_DAYS), datetime.time.min)
 
@@ -70,7 +117,6 @@ class PolymarketAgent(BaseAgent):
         market_ids = list(curated_by_id.keys())
 
         with Session(db) as session:
-            # Latest snapshot per market (max timestamp ≤ date)
             subq = (
                 select(
                     PolymarketRaw.market_id,
@@ -93,7 +139,6 @@ class PolymarketAgent(BaseAgent):
                 .all()
             )
 
-            # Earliest snapshot in 30d window per market (trend proxy)
             subq_30d = (
                 select(
                     PolymarketRaw.market_id,
@@ -175,7 +220,7 @@ class PolymarketAgent(BaseAgent):
                 confidence=confidence,
                 raw_call_id=call_id,
             )
-            for sector, tilt in validated["sector_impacts"].items()
+            for sector, tilt in validated["sector_tilts"].items()
         ]
 
         with Session(db) as session:

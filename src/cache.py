@@ -32,19 +32,21 @@ _CACHE_DIR = Path(__file__).parent.parent / "data" / "cache"
 # ---------------------------------------------------------------------------
 
 
-def cache_key(model: str, prompt: str, input_data: dict) -> str:
+def cache_key(model: str, prompt: str, input_data: dict, tool: dict | None = None) -> str:
     """Compute a deterministic SHA256 key for an LLM call.
 
     Args:
         model: Model string (e.g. 'claude-haiku-4-5-20251001').
         prompt: System or user prompt text.
         input_data: Dict of structured inputs passed alongside the prompt.
+        tool: Anthropic tool definition dict, or None for plain-text calls.
+              Changing the tool schema invalidates existing cache entries.
 
     Returns:
         64-character lowercase hex digest.
     """
     payload = json.dumps(
-        {"model": model, "prompt": prompt, "input_data": input_data},
+        {"model": model, "prompt": prompt, "input_data": input_data, "tool": tool},
         sort_keys=True,
         ensure_ascii=False,
     )
@@ -90,6 +92,7 @@ def cached_call(
     *,
     agent_name: str = "unknown",
     engine: Engine | None = None,
+    tool: dict | None = None,
 ) -> dict:
     """Wrap an Anthropic API call with cache check and audit logging.
 
@@ -112,7 +115,7 @@ def cached_call(
     Returns:
         Response dict — from cache or directly from call_fn.
     """
-    key = cache_key(model, prompt, input_data)
+    key = cache_key(model, prompt, input_data, tool=tool)
 
     # ── Cache hit path ────────────────────────────────────────────────────
     t0 = time.monotonic()

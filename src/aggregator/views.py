@@ -1,4 +1,8 @@
-"""Views builder — merges agent signals into Black-Litterman (Q, Omega)."""
+"""Views builder — merges agent signals into Black-Litterman (Q, Omega).
+
+All tunable parameters (max_excess_return_annual, omega_base, regime_scale_intercept,
+regime_scale_slope, agent weights) are read from config/optimizer.yaml (ADR-011, ADR-012).
+"""
 from __future__ import annotations
 
 import datetime
@@ -15,24 +19,11 @@ from db.models import Signal, View
 logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------
-# Tunable parameters — see decisions.md ADR-011
+# Non-hyperparameter constants — these are implementation details,
+# not backtest knobs. They do NOT live in config.
 # ------------------------------------------------------------------
-_MAX_EXCESS_RETURN_ANNUAL: float = 0.05   # 5 % annualised at a ±1 signal
 _WEEKS_PER_YEAR: int = 52
-_MAX_EXCESS_RETURN_WEEKLY: float = _MAX_EXCESS_RETURN_ANNUAL / _WEEKS_PER_YEAR
-
-# Omega: view variance at unit conviction.  Inverse-proportional scaling means
-# a fully-confident view (conviction=1) gets omega=_OMEGA_BASE; a zero-confidence
-# view gets omega=_OMEGA_BASE / _MIN_CONVICTION (large uncertainty → tiny BL weight).
-_OMEGA_BASE: float = 0.0001   # ≈ 1 bp² weekly variance at max conviction
-_MIN_CONVICTION: float = 0.01  # floor preventing division-by-zero
-
-# Macro regime scaling: risk_off(-1)→0.50, neutral(0)→0.75, risk_on(+1)→1.00
-# Linear: scale = _RM_INTERCEPT + _RM_SLOPE * regime_float
-_RM_INTERCEPT: float = 0.75
-_RM_SLOPE: float = 0.25
-
-_DEFAULT_WEIGHTS: dict[str, float] = {"news": 0.4, "macro": 0.3, "polymarket": 0.3}
+_MIN_CONVICTION: float = 0.01  # floor preventing division-by-zero in Omega
 
 _SENTIMENT_AGENT = "sentiment"
 _MACRO_AGENT = "macro"
@@ -77,40 +68,47 @@ def _parse_macro(signals_by_agent: dict[str, list[dict]]) -> tuple[float, float]
 def build_views(
     date: datetime.date,
     db: Engine,
+    mode: str = "live",
     weights: dict[str, float] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Merge agent signals into Black-Litterman views for `date`.
 
-    Requires that all three agents have already written their signals to the DB
-    for this date.  The function is idempotent — re-running overwrites the views
-    table rows for `date`.
-
-    Algorithm (per sector):
-    1. Directional signal  = weighted sum of (news_signal × news_conviction,
-                                               poly_signal × poly_confidence).
-       Macro does not supply per-sector direction; its regime scales everything.
-    2. Regime scale        = 0.75 + 0.25 × macro_regime_float
-                             → 0.50 (risk_off), 0.75 (neutral), 1.00 (risk_on)
-    3. Q_sector            = directional_signal × regime_scale × MAX_WEEKLY_RETURN
-    4. Aggregate conviction = (w_news × news_conv + w_macro × macro_conf
-                               + w_poly × poly_conf) × regime_scale
-    5. Omega_sector        = OMEGA_BASE / max(aggregate_conviction, MIN_CONVICTION)
+    All hyperparameters are read from config/optimizer.yaml at call time.
 
     Args:
-        date: Rebalance date.  Agent signals for this date must exist in the DB.
+        date: Rebalance date. Agent signals for this date must exist in the DB.
         db: SQLAlchemy engine.
-        weights: Agent weight dict with keys "news", "macro", "polymarket".
-                 Must sum to ≤ 1.0.  Defaults to {"news":0.4,"macro":0.3,"poly":0.3}.
+        mode: "live" or "backtest". Selects the aggregator_weights config stanza
+              when weights is None. "backtest" sets polymarket weight to 0.0 because
+              polymarket_raw has no historical data (ADR-012).
+        weights: Override agent weight dict with keys "news", "macro", "polymarket".
+                 Must sum to ≤ 1.0. Overrides mode-based config weights.
 
     Returns:
         Q: np.ndarray of shape (N,) — weekly expected excess returns per sector.
         Omega: np.ndarray of shape (N, N) — diagonal view-uncertainty matrix.
 
     Raises:
-        ValueError: No signal rows exist in the DB for this date.
+        ValueError: No signal rows exist in the DB for this date, or weights sum > 1.0.
     """
+    cfg = load_config("optimizer")
+    agg = cfg.aggregator
+    max_return_weekly = agg.max_excess_return_annual / _WEEKS_PER_YEAR
+    omega_base = agg.omega_base
+    rm_intercept = agg.regime_scale_intercept
+    rm_slope = agg.regime_scale_slope
+
     if weights is None:
-        weights = _DEFAULT_WEIGHTS.copy()
+        w_cfg = cfg.aggregator_weights
+        w = w_cfg.backtest if mode == "backtest" else w_cfg.live
+        weights = {"news": w.news, "macro": w.macro, "polymarket": w.polymarket}
+
+    weight_sum = sum(weights.values())
+    if weight_sum > 1.0 + 1e-6:
+        raise ValueError(
+            f"Agent weights must sum to ≤ 1.0, got {weight_sum:.4f}. "
+            f"Weights: {weights}"
+        )
 
     sectors = [t.ticker for t in load_config("universe").tickers]
     n = len(sectors)
@@ -125,7 +123,7 @@ def build_views(
     # Macro regime
     # ----------------------------------------------------------------
     macro_regime, macro_conf = _parse_macro(signals_by_agent)
-    regime_scale = _RM_INTERCEPT + _RM_SLOPE * macro_regime  # ∈ [0.50, 1.00]
+    regime_scale = rm_intercept + rm_slope * macro_regime  # ∈ [0.50, 1.00]
 
     # ----------------------------------------------------------------
     # Index per-sector signals by ticker
@@ -153,27 +151,22 @@ def build_views(
         poly_signal = poly_row["signal_value"] if poly_row else 0.0
         poly_conf = poly_row["confidence"] if poly_row else 0.0
 
-        # Conviction-weighted directional signal (macro regime doesn't supply
-        # per-sector direction — only scales the magnitude).
         raw_signal = (
             weights["news"] * news_signal * news_conv
             + weights["polymarket"] * poly_signal * poly_conf
         )
         scaled_signal = raw_signal * regime_scale
 
-        # Convert [-1, 1] → weekly excess return.
-        q = scaled_signal * _MAX_EXCESS_RETURN_WEEKLY
+        q = scaled_signal * max_return_weekly
         q_values.append(q)
 
-        # Aggregate conviction across all three agents, dampened by macro regime.
         agg_conviction = (
             weights["news"] * news_conv
             + weights["macro"] * macro_conf
             + weights["polymarket"] * poly_conf
         ) * regime_scale
 
-        # View uncertainty: high conviction → small omega → view carries more weight.
-        omega_entry = _OMEGA_BASE / max(agg_conviction, _MIN_CONVICTION)
+        omega_entry = omega_base / max(agg_conviction, _MIN_CONVICTION)
         omega_diag.append(omega_entry)
 
         view_rows.append(
@@ -197,8 +190,9 @@ def build_views(
         session.commit()
 
     logger.info(
-        "build_views date=%s  |Q|_max=%.5f  regime=%.1f  scale=%.2f  sectors=%d",
+        "build_views date=%s  mode=%s  |Q|_max=%.5f  regime=%.1f  scale=%.2f  sectors=%d",
         date,
+        mode,
         float(np.abs(q_arr).max()) if q_arr.size else 0.0,
         macro_regime,
         regime_scale,

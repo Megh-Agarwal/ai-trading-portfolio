@@ -60,8 +60,7 @@ def test_load_backtest():
 
 
 def test_optimizer_max_position_weight_above_one_raises(tmp_path, monkeypatch):
-    bad = {"tau": 0.05, "risk_aversion": 2.5, "max_position_weight": 1.5,
-           "vol_target": 0.12, "turnover_penalty": 0.1, "transaction_cost_bps": 10}
+    bad = _optimizer_data(max_position_weight=1.5)
     _write_and_patch(tmp_path, monkeypatch, "optimizer", bad)
     with pytest.raises(ValidationError, match="max_position_weight"):
         load_config("optimizer")
@@ -101,8 +100,7 @@ def test_missing_file_raises(tmp_path, monkeypatch):
 
 
 def test_max_position_weight_reflects_yaml_value(tmp_path, monkeypatch):
-    data = {"tau": 0.05, "risk_aversion": 2.5, "max_position_weight": 0.15,
-            "vol_target": 0.12, "turnover_penalty": 0.1, "transaction_cost_bps": 10}
+    data = _optimizer_data(max_position_weight=0.15)
     _write_and_patch(tmp_path, monkeypatch, "optimizer", data)
     cfg = load_config("optimizer")
     assert cfg.max_position_weight == 0.15
@@ -112,7 +110,32 @@ def test_max_position_weight_reflects_yaml_value(tmp_path, monkeypatch):
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Minimum aggregator fields required by OptimizerConfig since Blocker 2 (ADR-012).
+_OPTIMIZER_AGGREGATOR = {
+    "aggregator": {
+        "max_excess_return_annual": 0.05,
+        "omega_base": 0.0001,
+        "regime_scale_intercept": 0.75,
+        "regime_scale_slope": 0.25,
+    },
+    "aggregator_weights": {
+        "backtest": {"news": 0.57, "macro": 0.43, "polymarket": 0.00},
+        "live": {"news": 0.40, "macro": 0.30, "polymarket": 0.30},
+    },
+}
+
 
 def _write_and_patch(tmp_path: Path, monkeypatch, name: str, data: dict) -> None:
     (tmp_path / f"{name}.yaml").write_text(yaml.dump(data))
     monkeypatch.setattr("config._CONFIG_DIR", tmp_path)
+
+
+def _optimizer_data(**overrides) -> dict:
+    """Return a minimal valid optimizer config dict with optional field overrides."""
+    base = {
+        "tau": 0.05, "risk_aversion": 2.5, "max_position_weight": 0.25,
+        "vol_target": 0.12, "turnover_penalty": 0.1, "transaction_cost_bps": 10,
+        **_OPTIMIZER_AGGREGATOR,
+    }
+    base.update(overrides)
+    return base

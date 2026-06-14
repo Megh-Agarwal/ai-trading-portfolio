@@ -150,3 +150,51 @@ Each entry: date, context, decision, consequences.
 4. **Omega construction:** `Omega_ii = OMEGA_BASE / max(conviction_i, MIN_CONVICTION)` where `OMEGA_BASE = 0.0001` (~1 bp² weekly at unit conviction). The inverse-proportional form is the simplest link between conviction and view uncertainty consistent with BL theory. A more sophisticated calibration would set `OMEGA = tau × P × Sigma × P'` but that requires the covariance matrix from the optimizer — this simplified form decouples the aggregator from the optimizer layer.
 
 **Consequences:** All four parameters (`_MAX_EXCESS_RETURN_ANNUAL`, default weights, `_OMEGA_BASE`, `_MIN_CONVICTION`) are module-level constants in `views.py` that can be swept during M5 backtest calibration. The signal-to-return mapping is the most sensitive: changing it from 5 % to 10 % doubles all position tilts. This must be documented prominently in the eventual paper's methodology section.
+
+---
+
+## ADR-012 — Separate backtest and live weights for Polymarket agent
+
+**Date:** 2026-06-14
+
+**Context:** The `polymarket_raw` table only contains data from June 2026 (the date the ingestion script was first run). All historical backtest dates prior to that have `current_prob = null` for every curated market, meaning Agent 3 (Polymarket) always outputs zero tilts during backtesting. A 30% weight on a perpetually-zero agent degrades backtest quality without adding information.
+
+**Decision:** Add separate `backtest` and `live` weight sets to `config/optimizer.yaml` under `aggregator_weights`. The `build_views` function takes a `mode` parameter ("live" or "backtest") and selects the corresponding weight set. Backtest weights: news=0.57, macro=0.43, polymarket=0.00. Live weights unchanged: news=0.40, macro=0.30, polymarket=0.30. The backtest weights redistribute the 30% polymarket allocation proportionally between news and macro.
+
+**Consequences:** Backtest results reflect a two-agent system (news + macro). Live forward trading uses all three agents equally with Polymarket as the third source. Any comparison of backtest vs. live Sharpe ratios must account for this structural difference — it is not a model improvement but a data availability constraint. Documented in methodology section as a known limitation.
+
+---
+
+## ADR-013 — MacroAgent news digest restricted to XLF and XLI
+
+**Date:** 2026-06-14
+
+**Context:** The macro agent's prompt includes a news digest to provide narrative context for the quantitative indicators. Including all 10 sectors would roughly triple the news token count per macro call (~1,500 additional tokens at Sonnet 4.6 pricing), adding ~$0.02/call for marginal benefit. The macro agent's primary job is regime classification from FRED quantitative data; news is supplementary context.
+
+**Decision:** Restrict macro news digest to XLF (Financials) and XLI (Industrials). Rationale: financials are the most macro-sensitive sector (directly affected by rate decisions, credit conditions, and liquidity); industrials are the best leading indicator of the real economy (PMI, durable goods, capex). Both sectors have high information density per article relative to macro regime classification.
+
+**Consequences:** A major tech regulation event (e.g. XLK) or energy shock (XLE) may not surface in macro reasoning unless it also appears in XLF or XLI news. This is an accepted limitation — such events typically propagate into quantitative indicators (VIX spike, rate moves) faster than the weekly news digest would surface them. If macro miss-classification due to absent sector news becomes a recurring issue, extend the digest to XLK and XLE.
+
+---
+
+## ADR-014 — rate_outlook stored but not used in v1 portfolio construction
+
+**Date:** 2026-06-14
+
+**Context:** `MacroAgent._write_signals` writes two rows per date: `target="macro_regime"` (used by aggregator) and `target="rate_outlook"` (not used). The rate outlook carries information relevant to rate-sensitive sectors (XLF benefits from rising rates; XLRE and XLU are hurt). Wiring it into the aggregator requires sector-specific rate sensitivity weights — a calibration decision that belongs in M5 once we have backtest data.
+
+**Decision:** Store `rate_outlook` in the signals table but do not consume it in `build_views` for v1. The data is preserved for two purposes: (1) M5 attribution analysis — test whether weeks where macro agent predicted rising rates correlate with XLF outperformance vs. XLRE underperformance; (2) v2 aggregator enhancement — wire rate_outlook into per-sector Q adjustments once sensitivity weights are calibrated from backtest.
+
+**Consequences:** rate_outlook is effectively dead signal in v1 but costs nothing to store. If attribution analysis (M5) confirms meaningful predictive power, the upgrade path is to add a `rate_sensitivity` vector per sector to the aggregator config and include it in Q calculation. This is one config stanza and a few lines of code in `build_views`.
+
+---
+
+## ADR-015 — Per-sector conviction replaces single conviction scalar
+
+**Date:** 2026-06-14
+
+**Context:** The original `NewsSignal` schema had a single `conviction: float` applied uniformly to all 10 sectors. This was architecturally incorrect: an agent that reads 15 XLK articles and 1 XLU article should report high conviction for XLK and low conviction for XLU, not a blended scalar that applies to both. The uniform conviction also prevented the aggregator from correctly weighting sectors with thin news coverage.
+
+**Decision:** Update `NewsSignal` to output `sector_conviction: dict[str, float]` (one value per ETF ticker) instead of `conviction: float`. Each value is independently constrained to [0, 1]. The tool schema enforces `sector_conviction ≤ 0.2` for sectors with fewer than 3 articles by prompt instruction (not schema enforcement, since the API cannot count articles). The signals table stores per-sector conviction in `Signal.confidence` from this session forward, giving the aggregator correct per-sector uncertainty inputs.
+
+**Consequences:** Any historical signal rows written before this change carry the old single-conviction value replicated across all sectors — they are still valid for aggregation but lose the per-sector granularity. For the backtest window, all signals will be regenerated via cached API calls so historical rows will reflect per-sector conviction. The `evidence` field added to `NewsSignal` enforces grounding: any sector with |sentiment| > 0.1 must cite a specific headline, preventing the model from outputting non-zero scores based on market memory.
