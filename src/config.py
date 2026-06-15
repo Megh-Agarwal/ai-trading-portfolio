@@ -84,6 +84,14 @@ class PortfolioConfig(BaseModel):
     solver_fallback: str
 
 
+class RiskConfig(BaseModel):
+    max_single_rebalance_turnover: float = Field(gt=0)
+    max_drawdown_threshold: float = Field(gt=0)
+    drawdown_lookback_days: int = Field(gt=0)
+    vol_breach_multiplier: float = Field(gt=0)
+    vol_deleveraging_blend: float = Field(gt=0, le=1)
+
+
 class OptimizerConfig(BaseModel):
     tau: float = Field(gt=0)
     risk_aversion: float = Field(gt=0)
@@ -98,6 +106,7 @@ class OptimizerConfig(BaseModel):
     black_litterman: BlackLittermanConfig
     transaction_costs: TransactionCostsConfig
     portfolio: PortfolioConfig
+    risk: RiskConfig
 
     @model_validator(mode="after")
     def check_market_cap_weights(self) -> OptimizerConfig:

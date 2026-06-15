@@ -152,3 +152,18 @@ class PortfolioSnapshot(Base):
     net_exposure: Mapped[float] = mapped_column(Float)
 
     __table_args__ = (Index("ix_portfolio_snapshot_date", "date"),)
+
+
+class RiskEvent(Base):
+    __tablename__ = "risk_events"
+
+    event_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    date: Mapped[datetime.date] = mapped_column(Date)
+    check_name: Mapped[str] = mapped_column(String(100))
+    triggered: Mapped[bool] = mapped_column(Boolean)
+    value: Mapped[float | None] = mapped_column(Float)
+    threshold: Mapped[float | None] = mapped_column(Float)
+    action_taken: Mapped[str | None] = mapped_column(String(200))
+    message: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_risk_events_date", "date"),)

@@ -21,6 +21,7 @@ EXPECTED_TABLES = {
     "trades",
     "positions",
     "portfolio_snapshot",
+    "risk_events",
 }
 
 

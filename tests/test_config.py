@@ -125,7 +125,9 @@ def test_max_position_weight_reflects_yaml_value(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 # Minimum aggregator fields required by OptimizerConfig since Blocker 2 (ADR-012).
-# market_cap_weights added for Ticket 3.1 (ADR-016). prior added for Ticket 3.1.
+# market_cap_weights/prior added for Ticket 3.1 (ADR-016).
+# black_litterman/transaction_costs/portfolio added for Tickets 3.2–3.4.
+# risk added for Ticket 3.5 (ADR-018).
 _OPTIMIZER_AGGREGATOR = {
     "aggregator": {
         "max_excess_return_annual": 0.05,
@@ -151,6 +153,13 @@ _OPTIMIZER_AGGREGATOR = {
         "turnover_penalty": 0.10,
         "solver_primary": "CLARABEL",
         "solver_fallback": "SCS",
+    },
+    "risk": {
+        "max_single_rebalance_turnover": 0.50,
+        "max_drawdown_threshold": 0.15,
+        "drawdown_lookback_days": 20,
+        "vol_breach_multiplier": 1.50,
+        "vol_deleveraging_blend": 0.20,
     },
 }
 

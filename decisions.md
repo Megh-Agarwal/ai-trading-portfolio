@@ -213,6 +213,26 @@ Each entry: date, context, decision, consequences.
 
 ---
 
+## ADR-018 — Risk circuit breakers: pre-trade and post-trade checks
+
+**Date:** 2026-06-15
+
+**Context:** A paper trading system has no real P&L exposure, so automated risk controls might seem unnecessary. However, the discipline of building explicit checks before and after every optimization is what separates a research project from a toy system. Each check encodes a specific failure mode and is a concrete talking point in any interview or write-up — "the system had a 15% rolling drawdown circuit breaker that halted rebalancing for one week" signals risk management maturity in a way that hand-waving cannot.
+
+**Decision:** Implement four checks in `src/optimizer/risk_checks.py` as individual functions each returning a `RiskCheckResult` dataclass. Checks are orchestrated by `run_all_risk_checks` which runs them all, logs every result (triggered or not) to `risk_events`, then applies triggered actions in sequence. Drawdown is a circuit breaker that overrides all other actions.
+
+Four checks:
+1. **max_position** (pre-trade): clip any weight exceeding `portfolio.max_position_weight` and renormalize. Catches residual violations from the solver's clip+renorm that floating-point rounding might leave behind.
+2. **max_turnover** (pre-trade): if L1 turnover exceeds `risk.max_single_rebalance_turnover` (default 0.50), blend new and previous weights 50/50. Prevents a single large signal shift from forcing a massive trade in one week.
+3. **drawdown_circuit_breaker** (post-trade state): if rolling 20-day drawdown of `portfolio_snapshot.total_value` falls below −15%, return previous weights unchanged — skip the rebalance entirely. Enforces "don't fight a falling knife" discipline.
+4. **realized_vol** (post-trade state): if annualised realized vol over the lookback window exceeds `vol_target × vol_breach_multiplier` (default 1.5×), blend weights 20% toward equal-weight — partial deleveraging without abandoning positions.
+
+All thresholds live in `config/optimizer.yaml` under `risk:`. No constants are hardcoded.
+
+**Consequences:** The drawdown circuit breaker will occasionally halt rebalancing during legitimate recoveries (false positives). This is the preferred direction of error — missing a rebalance costs less than doubling down into a crash. The 15% threshold is conservative and should be disclosed in the methodology as a design choice, not a calibrated parameter. All risk events are written to the `risk_events` table for post-hoc audit and attribution analysis.
+
+---
+
 ## ADR-017 — Transaction cost assumption: 3 bps one-way (conservative)
 
 **Date:** 2026-06-15
