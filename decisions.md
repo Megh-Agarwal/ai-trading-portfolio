@@ -4,6 +4,18 @@ Each entry: date, context, decision, consequences.
 
 ---
 
+## ADR-016 — Market-cap weights for Black-Litterman equilibrium prior
+
+**Date:** 2026-06-15
+
+**Context:** `compute_equilibrium_returns` (Ticket 3.1) requires market-portfolio weights w_mkt to compute the BL implied equilibrium return π = λΣw_mkt. The BL model uses the global market portfolio; for a 10-sector ETF universe the best available proxy is the S&P 500 sector composition as published by SSGA (State Street Global Advisors) in their SPY factsheet.
+
+**Decision:** Store SPY sector weights in `config/optimizer.yaml` under `market_cap_weights` (ticker → raw percentage). `compute_equilibrium_returns` renormalises the weights to sum=1 at call time, so raw SSGA percentages can be passed directly without manually adjusting for the excluded XLC sector. Refresh quarterly when SPY rebalances; changes are a one-line YAML edit with no code changes required.
+
+**Consequences:** The prior is mildly stale between quarterly refreshes. Sector weights drift slowly (±1–2% per quarter) so the impact on equilibrium returns is small. Ledoit-Wolf shrinkage (not sample covariance) is used by default for the covariance estimate because T/N ≈ 25 (252 days / 10 sectors) is enough for LW to be reliable but too small for the sample matrix to be well-conditioned without shrinkage.
+
+---
+
 ## ADR-001 — Universe: 10 sector ETFs, excluding XLC
 
 **Date:** 2026-06-11

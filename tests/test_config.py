@@ -46,6 +46,20 @@ def test_load_optimizer():
     assert cfg.transaction_cost_bps == 10
 
 
+def test_optimizer_market_cap_weights():
+    cfg = load_config("optimizer")
+    assert len(cfg.market_cap_weights) == 10
+    assert "XLK" in cfg.market_cap_weights
+    assert all(w > 0 for w in cfg.market_cap_weights.values())
+
+
+def test_optimizer_market_cap_weights_nonpositive_raises(tmp_path, monkeypatch):
+    bad = _optimizer_data(market_cap_weights={"XLK": 0.5, "XLF": -0.1})
+    _write_and_patch(tmp_path, monkeypatch, "optimizer", bad)
+    with pytest.raises(ValidationError, match="market_cap_weights"):
+        load_config("optimizer")
+
+
 def test_load_backtest():
     cfg = load_config("backtest")
     assert isinstance(cfg, BacktestConfig)
@@ -111,6 +125,7 @@ def test_max_position_weight_reflects_yaml_value(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 # Minimum aggregator fields required by OptimizerConfig since Blocker 2 (ADR-012).
+# market_cap_weights added for Ticket 3.1 (ADR-016).
 _OPTIMIZER_AGGREGATOR = {
     "aggregator": {
         "max_excess_return_annual": 0.05,
@@ -122,6 +137,7 @@ _OPTIMIZER_AGGREGATOR = {
         "backtest": {"news": 0.57, "macro": 0.43, "polymarket": 0.00},
         "live": {"news": 0.40, "macro": 0.30, "polymarket": 0.30},
     },
+    "market_cap_weights": {"XLK": 0.30, "XLF": 0.10, "XLV": 0.10},
 }
 
 

@@ -20,6 +20,22 @@ aggregator:
   regime_scale_intercept: 0.75     # neutral regime multiplier
   regime_scale_slope: 0.25         # risk_off→0.50, neutral→0.75, risk_on→1.00
 
+# SPY sector weights proxy for Black-Litterman equilibrium prior (ADR-016).
+# Source: SSGA SPY factsheet — refresh quarterly when SPY rebalances.
+# Excludes XLC (Communication Services) — not in our 10-ETF universe.
+# Raw percentages; renormalized to sum=1 at call time (compute_equilibrium_returns).
+market_cap_weights:
+  XLK: 0.323   # Technology
+  XLF: 0.131   # Financials
+  XLV: 0.122   # Health Care
+  XLY: 0.102   # Consumer Discretionary
+  XLP: 0.059   # Consumer Staples
+  XLE: 0.040   # Energy
+  XLI: 0.089   # Industrials
+  XLB: 0.026   # Materials
+  XLRE: 0.025  # Real Estate
+  XLU: 0.026   # Utilities
+
 # Per-mode agent weights (ADR-012)
 # backtest: Polymarket has no historical data — weight redistributed to news+macro
 # live: full 3-agent weights once Polymarket ingest catches up

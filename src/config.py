@@ -71,6 +71,16 @@ class OptimizerConfig(BaseModel):
     transaction_cost_bps: float = Field(ge=0)
     aggregator: AggregatorParams
     aggregator_weights: AggregatorWeights
+    market_cap_weights: dict[str, float]
+
+    @model_validator(mode="after")
+    def check_market_cap_weights(self) -> OptimizerConfig:
+        for ticker, w in self.market_cap_weights.items():
+            if w <= 0:
+                raise ValueError(
+                    f"market_cap_weights[{ticker!r}] = {w} must be positive"
+                )
+        return self
 
 
 class BacktestConfig(BaseModel):
