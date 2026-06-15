@@ -66,6 +66,10 @@ class PriorConfig(BaseModel):
     lookback_days: int = Field(gt=0)
 
 
+class BlackLittermanConfig(BaseModel):
+    tau: float = Field(gt=0)
+
+
 class OptimizerConfig(BaseModel):
     tau: float = Field(gt=0)
     risk_aversion: float = Field(gt=0)
@@ -77,6 +81,7 @@ class OptimizerConfig(BaseModel):
     aggregator_weights: AggregatorWeights
     market_cap_weights: dict[str, float]
     prior: PriorConfig
+    black_litterman: BlackLittermanConfig
 
     @model_validator(mode="after")
     def check_market_cap_weights(self) -> OptimizerConfig:

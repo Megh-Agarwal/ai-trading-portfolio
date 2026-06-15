@@ -139,6 +139,7 @@ _OPTIMIZER_AGGREGATOR = {
     },
     "market_cap_weights": {"XLK": 0.30, "XLF": 0.10, "XLV": 0.10},
     "prior": {"lookback_days": 252},
+    "black_litterman": {"tau": 0.05},
 }
 
 
