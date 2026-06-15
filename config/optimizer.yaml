@@ -20,6 +20,14 @@ prior:
 black_litterman:
   tau: 0.05   # prior uncertainty scalar — scales how much views can move the equilibrium
 
+# Transaction cost model — one-way costs for sector ETF trades (ADR-017, Ticket 3.4)
+# Conservative: actual spreads are often <1bp, but 3bps total understates rather than
+# overstates performance. min_trade_threshold avoids charging rounding noise.
+transaction_costs:
+  spread_bps: 1.0              # half-spread cost (one side)
+  slippage_bps: 2.0            # market-impact / slippage estimate
+  min_trade_threshold: 0.001   # |Δw| ≤ this → no cost charged (0.1% weight change)
+
 # Portfolio optimization constraints and solver preferences (Ticket 3.3)
 # ECOS not available in CVXPY 1.4+; CLARABEL is the modern equivalent default.
 portfolio:

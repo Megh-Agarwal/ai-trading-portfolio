@@ -70,6 +70,12 @@ class BlackLittermanConfig(BaseModel):
     tau: float = Field(gt=0)
 
 
+class TransactionCostsConfig(BaseModel):
+    spread_bps: float = Field(ge=0)
+    slippage_bps: float = Field(ge=0)
+    min_trade_threshold: float = Field(ge=0)
+
+
 class PortfolioConfig(BaseModel):
     max_position_weight: float = Field(gt=0, le=1)
     vol_target: float = Field(gt=0, le=1)
@@ -90,6 +96,7 @@ class OptimizerConfig(BaseModel):
     market_cap_weights: dict[str, float]
     prior: PriorConfig
     black_litterman: BlackLittermanConfig
+    transaction_costs: TransactionCostsConfig
     portfolio: PortfolioConfig
 
     @model_validator(mode="after")

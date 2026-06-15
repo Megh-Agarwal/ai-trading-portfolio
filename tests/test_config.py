@@ -140,6 +140,11 @@ _OPTIMIZER_AGGREGATOR = {
     "market_cap_weights": {"XLK": 0.30, "XLF": 0.10, "XLV": 0.10},
     "prior": {"lookback_days": 252},
     "black_litterman": {"tau": 0.05},
+    "transaction_costs": {
+        "spread_bps": 1.0,
+        "slippage_bps": 2.0,
+        "min_trade_threshold": 0.001,
+    },
     "portfolio": {
         "max_position_weight": 0.25,
         "vol_target": 0.20,

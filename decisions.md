@@ -210,3 +210,15 @@ Each entry: date, context, decision, consequences.
 **Decision:** Update `NewsSignal` to output `sector_conviction: dict[str, float]` (one value per ETF ticker) instead of `conviction: float`. Each value is independently constrained to [0, 1]. The tool schema enforces `sector_conviction ≤ 0.2` for sectors with fewer than 3 articles by prompt instruction (not schema enforcement, since the API cannot count articles). The signals table stores per-sector conviction in `Signal.confidence` from this session forward, giving the aggregator correct per-sector uncertainty inputs.
 
 **Consequences:** Any historical signal rows written before this change carry the old single-conviction value replicated across all sectors — they are still valid for aggregation but lose the per-sector granularity. For the backtest window, all signals will be regenerated via cached API calls so historical rows will reflect per-sector conviction. The `evidence` field added to `NewsSignal` enforces grounding: any sector with |sentiment| > 0.1 must cite a specific headline, preventing the model from outputting non-zero scores based on market memory.
+
+---
+
+## ADR-017 — Transaction cost assumption: 3 bps one-way (conservative)
+
+**Date:** 2026-06-15
+
+**Context:** The backtester and optimizer turnover penalty both need a one-way transaction cost estimate for sector ETF trades. Actual bid-ask spreads for liquid SPDR sector ETFs (XLK, XLF, etc.) are typically sub-1bp in normal market conditions. However, a model that overstates strategy performance by assuming unrealistically low costs is more dangerous than one that understates it.
+
+**Decision:** Use 1bp spread + 2bp slippage = 3bps one-way total. This is deliberately conservative relative to observed reality. The 1bp spread reflects a wider-than-typical half-spread; the 2bp slippage accounts for market impact on a small institutional account ($1–5M AUM). Both parameters live in `config/optimizer.yaml` under `transaction_costs` and are never hardcoded. Positions where |Δw| ≤ 0.001 (0.1% weight change) are treated as rounding noise and incur no cost — this avoids charging for micro-adjustments from solver tolerance.
+
+**Consequences:** Backtest Sharpe ratios and net returns will be slightly pessimistic relative to what a real implementation would likely achieve. This is the preferred direction of error for a research prototype. If live paper-trading data shows actual costs consistently below 3bps, the YAML can be updated without code changes. The conservative assumption should be disclosed in the methodology section of any write-up.
