@@ -1,21 +1,23 @@
 """Black-Litterman prior: market-implied equilibrium returns and covariance estimation.
 
-Two public functions:
+Public API:
 - compute_covariance: annualised covariance via Ledoit-Wolf shrinkage (or sample).
 - compute_equilibrium_returns: implied equilibrium returns π = λ Σ w_mkt.
-
-Both functions accept a wide-format prices DataFrame (dates × tickers) and return
-plain numpy arrays in ticker-column order. DB queries and DataFrame pivots are the
-caller's responsibility so this module stays a pure-math layer.
+- get_spy_sector_weights: load and normalise SPY sector weights from config.
+- get_prior: orchestrator — loads prices from DB and returns (π, Σ).
 """
 from __future__ import annotations
 
+import datetime
 import logging
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 from sklearn.covariance import LedoitWolf
+
+if TYPE_CHECKING:
+    from sqlalchemy import Engine
 
 logger = logging.getLogger(__name__)
 
@@ -133,3 +135,98 @@ def compute_equilibrium_returns(
         float(pi.min() * 100), float(pi.max() * 100),
     )
     return pi
+
+
+def get_spy_sector_weights(universe: list[str]) -> np.ndarray:
+    """Load SPY sector weights from optimizer.yaml and return as a normalised array.
+
+    Args:
+        universe: Ordered list of sector ETF tickers. The returned array follows
+            this order so it can be passed directly to compute_equilibrium_returns.
+
+    Returns:
+        Weight vector of shape (N,) that sums to 1.0 ± 1e-6.
+
+    Raises:
+        ValueError: Any ticker in universe is absent from market_cap_weights config,
+            or all config weights are zero or negative.
+    """
+    from config import load_config
+
+    cfg = load_config("optimizer")
+    missing = [t for t in universe if t not in cfg.market_cap_weights]
+    if missing:
+        raise ValueError(
+            f"market_cap_weights in optimizer.yaml is missing tickers: {missing}"
+        )
+    raw_w = np.array([cfg.market_cap_weights[t] for t in universe], dtype=float)
+    if raw_w.sum() <= 0:
+        raise ValueError(
+            "market_cap_weights entries sum to zero or negative — check optimizer.yaml"
+        )
+    w = raw_w / raw_w.sum()
+    assert abs(w.sum() - 1.0) < 1e-6  # postcondition guard
+    return w
+
+
+def get_prior(
+    date: str | datetime.date,
+    db: Engine,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Orchestrate the BL prior: load prices from DB, compute Σ and π.
+
+    Args:
+        date: Rebalance date. All price rows up to this date are eligible;
+            the most recent `prior.lookback_days` rows (from optimizer.yaml) are used.
+        db: SQLAlchemy engine connected to the state database.
+
+    Returns:
+        (pi, sigma): equilibrium return vector of shape (N,) and annualised
+            covariance matrix of shape (N, N). N = number of tickers in universe.yaml.
+
+    Raises:
+        ValueError: Fewer than lookback_days + 1 price rows exist, any ticker is
+            missing from market_cap_weights, or no price data found in the DB.
+    """
+    from config import load_config
+    from db.models import Price
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    cfg_opt = load_config("optimizer")
+    cfg_uni = load_config("universe")
+    tickers = cfg_uni.ticker_list
+    lookback_days = cfg_opt.prior.lookback_days
+
+    rebalance_date = (
+        datetime.date.fromisoformat(date) if isinstance(date, str) else date
+    )
+
+    with Session(db) as session:
+        rows = session.execute(
+            select(Price.date, Price.ticker, Price.adj_close)
+            .where(Price.ticker.in_(tickers))
+            .where(Price.date <= rebalance_date)
+            .order_by(Price.date)
+        ).all()
+
+    if not rows:
+        raise ValueError(
+            f"No price rows found for tickers={tickers} up to date={rebalance_date}. "
+            "Run scripts/ingest_prices.py first."
+        )
+
+    df_long = pd.DataFrame(rows, columns=["date", "ticker", "adj_close"])
+    prices_df = df_long.pivot(index="date", columns="ticker", values="adj_close")[tickers]
+    prices_df.columns.name = None
+
+    w_mkt = get_spy_sector_weights(tickers)
+    sigma = compute_covariance(prices_df, lookback_days=lookback_days)
+    pi = cfg_opt.risk_aversion * sigma @ w_mkt
+
+    logger.info(
+        "get_prior  date=%s  lookback=%d  π=[%.1f%%, %.1f%%]",
+        rebalance_date, lookback_days,
+        float(pi.min() * 100), float(pi.max() * 100),
+    )
+    return pi, sigma

@@ -5,7 +5,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from optimizer.equilibrium import compute_covariance, compute_equilibrium_returns
+from optimizer.equilibrium import (
+    compute_covariance,
+    compute_equilibrium_returns,
+    get_spy_sector_weights,
+    get_prior,
+)
 
 # ---------------------------------------------------------------------------
 # Synthetic data helpers
@@ -232,3 +237,104 @@ class TestOptimizerConfigWiring:
         pi = compute_equilibrium_returns(df, cfg.market_cap_weights, cfg.risk_aversion)
         assert pi.shape == (_N,)
         assert np.all(pi > 0)
+
+
+# ---------------------------------------------------------------------------
+# get_spy_sector_weights
+# ---------------------------------------------------------------------------
+
+_UNIVERSE = ["XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU"]
+
+
+class TestGetSpySectorWeights:
+    def test_spy_weights_sum_to_one(self) -> None:
+        w = get_spy_sector_weights(_UNIVERSE)
+        assert abs(w.sum() - 1.0) < 1e-6, f"Weights sum to {w.sum()}, not 1.0"
+
+    def test_returns_correct_shape(self) -> None:
+        w = get_spy_sector_weights(_UNIVERSE)
+        assert w.shape == (_N,)
+
+    def test_all_weights_positive(self) -> None:
+        w = get_spy_sector_weights(_UNIVERSE)
+        assert np.all(w > 0), f"Non-positive weights found: {w}"
+
+    def test_ordering_matches_universe(self) -> None:
+        """Weight at index i must correspond to universe[i]."""
+        w_full = get_spy_sector_weights(_UNIVERSE)
+        w_first = get_spy_sector_weights(["XLK"])
+        # XLK is the largest-weight sector; its share should dominate when isolated
+        assert abs(w_first[0] - 1.0) < 1e-6
+
+    def test_raises_on_unknown_ticker(self) -> None:
+        with pytest.raises(ValueError, match="missing tickers"):
+            get_spy_sector_weights(["XLK", "UNKNOWN"])
+
+
+# ---------------------------------------------------------------------------
+# get_prior
+# ---------------------------------------------------------------------------
+
+
+def _seed_prices(engine: object, tickers: list[str], n_days: int = 260) -> None:
+    """Insert synthetic price rows for all tickers into an in-memory DB."""
+    import datetime as dt
+    from db.models import Price
+    from sqlalchemy.orm import Session
+
+    rng = np.random.default_rng(99)
+    base_date = dt.date(2024, 1, 1)
+    prices_per_ticker = {
+        t: 100.0 * np.exp(np.cumsum(rng.standard_normal(n_days) * 0.01))
+        for t in tickers
+    }
+    with Session(engine) as session:
+        for day_idx in range(n_days):
+            d = base_date + dt.timedelta(days=day_idx)
+            for t in tickers:
+                p = float(prices_per_ticker[t][day_idx])
+                session.add(Price(
+                    date=d, ticker=t,
+                    open=p, high=p, low=p, close=p,
+                    adj_close=p, volume=1_000_000,
+                ))
+        session.commit()
+
+
+class TestGetPrior:
+    @pytest.fixture()
+    def engine(self):
+        from sqlalchemy import create_engine
+        from db.models import Base
+        eng = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(eng)
+        yield eng
+        eng.dispose()
+
+    def test_get_prior_returns_correct_shapes(self, engine) -> None:
+        from config import load_config
+        tickers = load_config("universe").ticker_list
+        n = len(tickers)
+        _seed_prices(engine, tickers)
+        pi, sigma = get_prior("2025-01-01", engine)
+        assert pi.shape == (n,), f"Expected pi shape ({n},), got {pi.shape}"
+        assert sigma.shape == (n, n), f"Expected sigma shape ({n},{n}), got {sigma.shape}"
+
+    def test_pi_all_positive(self, engine) -> None:
+        from config import load_config
+        tickers = load_config("universe").ticker_list
+        _seed_prices(engine, tickers)
+        pi, _ = get_prior("2025-01-01", engine)
+        assert np.all(pi > 0), f"Non-positive equilibrium returns: {pi}"
+
+    def test_sigma_is_psd(self, engine) -> None:
+        from config import load_config
+        tickers = load_config("universe").ticker_list
+        _seed_prices(engine, tickers)
+        _, sigma = get_prior("2025-01-01", engine)
+        eigvals = np.linalg.eigvalsh(sigma)
+        assert np.all(eigvals >= -1e-8), f"sigma not PSD; min eigenvalue={eigvals.min():.2e}"
+
+    def test_raises_when_no_price_data(self, engine) -> None:
+        with pytest.raises(ValueError, match="No price rows found"):
+            get_prior("2025-01-01", engine)

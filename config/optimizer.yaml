@@ -12,6 +12,10 @@ vol_target: 0.12           # annualised portfolio volatility target
 turnover_penalty: 0.10     # L1 turnover penalty coefficient
 transaction_cost_bps: 10   # one-way cost in basis points
 
+# BL prior configuration — lookback window for covariance estimation (Ticket 3.1)
+prior:
+  lookback_days: 252
+
 # Aggregator signal-to-return mapping and regime scaling (ADR-011)
 # These are the primary backtest hyperparameters — change here, not in source.
 aggregator:

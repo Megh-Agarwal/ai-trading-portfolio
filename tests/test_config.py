@@ -125,7 +125,7 @@ def test_max_position_weight_reflects_yaml_value(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 # Minimum aggregator fields required by OptimizerConfig since Blocker 2 (ADR-012).
-# market_cap_weights added for Ticket 3.1 (ADR-016).
+# market_cap_weights added for Ticket 3.1 (ADR-016). prior added for Ticket 3.1.
 _OPTIMIZER_AGGREGATOR = {
     "aggregator": {
         "max_excess_return_annual": 0.05,
@@ -138,6 +138,7 @@ _OPTIMIZER_AGGREGATOR = {
         "live": {"news": 0.40, "macro": 0.30, "polymarket": 0.30},
     },
     "market_cap_weights": {"XLK": 0.30, "XLF": 0.10, "XLV": 0.10},
+    "prior": {"lookback_days": 252},
 }
 
 
