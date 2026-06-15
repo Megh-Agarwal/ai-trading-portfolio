@@ -20,6 +20,15 @@ prior:
 black_litterman:
   tau: 0.05   # prior uncertainty scalar — scales how much views can move the equilibrium
 
+# Portfolio optimization constraints and solver preferences (Ticket 3.3)
+# ECOS not available in CVXPY 1.4+; CLARABEL is the modern equivalent default.
+portfolio:
+  max_position_weight: 0.25   # concentration cap per sector ETF
+  vol_target: 0.12            # annualised portfolio volatility ceiling
+  turnover_penalty: 0.10      # L1 turnover penalty coefficient (γ)
+  solver_primary: CLARABEL    # first-choice solver (replaces ECOS in CVXPY 1.4+)
+  solver_fallback: SCS        # fallback if primary fails
+
 # Aggregator signal-to-return mapping and regime scaling (ADR-011)
 # These are the primary backtest hyperparameters — change here, not in source.
 aggregator:

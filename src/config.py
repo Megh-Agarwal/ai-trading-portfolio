@@ -70,6 +70,14 @@ class BlackLittermanConfig(BaseModel):
     tau: float = Field(gt=0)
 
 
+class PortfolioConfig(BaseModel):
+    max_position_weight: float = Field(gt=0, le=1)
+    vol_target: float = Field(gt=0, le=1)
+    turnover_penalty: float = Field(ge=0)
+    solver_primary: str
+    solver_fallback: str
+
+
 class OptimizerConfig(BaseModel):
     tau: float = Field(gt=0)
     risk_aversion: float = Field(gt=0)
@@ -82,6 +90,7 @@ class OptimizerConfig(BaseModel):
     market_cap_weights: dict[str, float]
     prior: PriorConfig
     black_litterman: BlackLittermanConfig
+    portfolio: PortfolioConfig
 
     @model_validator(mode="after")
     def check_market_cap_weights(self) -> OptimizerConfig:
