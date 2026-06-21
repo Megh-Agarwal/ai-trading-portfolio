@@ -49,17 +49,18 @@ aggregator:
 # Source: SSGA SPY factsheet — refresh quarterly when SPY rebalances.
 # Excludes XLC (Communication Services) — not in our 10-ETF universe.
 # Raw percentages; renormalized to sum=1 at call time (compute_equilibrium_returns).
+# Last verified: 2026-06-21 against SSGA published data (see decisions.md ADR-019).
 market_cap_weights:
-  XLK: 0.323   # Technology
-  XLF: 0.131   # Financials
-  XLV: 0.122   # Health Care
-  XLY: 0.102   # Consumer Discretionary
-  XLP: 0.059   # Consumer Staples
-  XLE: 0.040   # Energy
-  XLI: 0.089   # Industrials
-  XLB: 0.026   # Materials
-  XLRE: 0.025  # Real Estate
-  XLU: 0.026   # Utilities
+  XLK: 0.3291  # Technology
+  XLF: 0.1259  # Financials
+  XLV: 0.0947  # Health Care  (was 0.122 — corrected 2026-06-21, XLV down ~2.7pp)
+  XLY: 0.0986  # Consumer Discretionary
+  XLP: 0.0525  # Consumer Staples
+  XLE: 0.0402  # Energy
+  XLI: 0.0902  # Industrials
+  XLB: 0.0209  # Materials
+  XLRE: 0.0195 # Real Estate
+  XLU: 0.0254  # Utilities
 
 # Risk circuit breakers — pre-trade and post-trade checks (ADR-018, Ticket 3.5)
 # Drawdown threshold: halt rebalance if rolling 20-day drawdown exceeds 15%.

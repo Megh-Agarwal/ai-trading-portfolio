@@ -233,6 +233,31 @@ All thresholds live in `config/optimizer.yaml` under `risk:`. No constants are h
 
 ---
 
+## ADR-019 — SPY sector weights corrected against SSGA published data (2026-06-21)
+
+**Date:** 2026-06-21
+
+**Context:** The `market_cap_weights` values in `config/optimizer.yaml` were set during Ticket 3.1 without verification against the SSGA SPY factsheet (flagged as a to-do). A cross-check against SSGA's current published sector allocation revealed one material discrepancy: XLV (Health Care) was stored as 12.2% but SSGA reports 9.47%, a gap of −2.73 percentage points. Because these weights are renormalized after excluding XLC, the XLV overstatement was also suppressing XLK's effective equilibrium weight by ~2.4% in the normalized prior. The remaining nine sectors were all within ±0.7% of SSGA actuals.
+
+**Decision:** Replace all ten values with the current SSGA figures (as published June 2026). The change reflects Health Care's genuine decline in S&P 500 composition over the past year (GLP-1 enthusiasm faded, pharma repricing headwinds). All values updated to four decimal precision.
+
+| Ticker | Old | New | Delta |
+|--------|-----|-----|-------|
+| XLK | 0.323 | 0.3291 | +0.61pp |
+| XLF | 0.131 | 0.1259 | −0.51pp |
+| XLV | 0.122 | 0.0947 | **−2.73pp** |
+| XLY | 0.102 | 0.0986 | −0.34pp |
+| XLP | 0.059 | 0.0525 | −0.65pp |
+| XLE | 0.040 | 0.0402 | +0.02pp |
+| XLI | 0.089 | 0.0902 | +0.12pp |
+| XLB | 0.026 | 0.0209 | −0.51pp |
+| XLRE | 0.025 | 0.0195 | −0.55pp |
+| XLU | 0.026 | 0.0254 | −0.06pp |
+
+**Consequences:** The BL equilibrium prior will now correctly underweight Health Care and more accurately reflect Technology's ~37% share of the ex-XLC S&P 500. Effect on portfolio output is modest for most sectors but XLV's equilibrium return π was materially overstated before this fix. Next refresh due Q3 2026 (September) when SPY rebalances.
+
+---
+
 ## ADR-017 — Transaction cost assumption: 3 bps one-way (conservative)
 
 **Date:** 2026-06-15

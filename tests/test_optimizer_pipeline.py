@@ -195,7 +195,7 @@ class TestHappyPath:
         required = {
             "date", "weights", "expected_return_annual", "expected_vol_annual",
             "turnover", "estimated_cost_usd", "risk_checks", "any_risk_triggered",
-            "mode", "views_available",
+            "mode", "views_available", "vol_constraint_status",
         }
         assert required <= set(result.keys())
 
@@ -512,7 +512,7 @@ class TestRiskChecksTriggered:
                 )
             ).scalar()
 
-        assert count == 4  # one row per check
+        assert count == 5  # 4 risk checks + 1 vol_constraint row
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +587,7 @@ class TestIntegration:
         assert all(w >= -1e-9 for w in result["weights"].values())
         assert result["estimated_cost_usd"] >= 0.0
         assert len(result["risk_checks"]) == 4
+        assert result["vol_constraint_status"] in {"not_binding", "binding", "infeasible_relaxed"}
 
         # DB state: exactly one row per ticker
         with Session(engine) as session:

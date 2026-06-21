@@ -60,21 +60,21 @@ class TestOptimizeWeightsInvariants:
         sigma = _make_sigma()
         mu = np.ones(_N) * 0.08
         prev = np.ones(_N) / _N
-        w = optimize_weights(mu, sigma, prev, _make_config())
+        w, _ = optimize_weights(mu, sigma, prev, _make_config())
         assert abs(w.sum() - 1.0) < 1e-6
 
     def test_weights_shape(self) -> None:
         sigma = _make_sigma()
         mu = np.ones(_N) * 0.08
         prev = np.ones(_N) / _N
-        w = optimize_weights(mu, sigma, prev, _make_config())
+        w, _ = optimize_weights(mu, sigma, prev, _make_config())
         assert w.shape == (_N,)
 
     def test_weights_non_negative(self) -> None:
         sigma = _make_sigma()
         mu = np.ones(_N) * 0.08
         prev = np.ones(_N) / _N
-        w = optimize_weights(mu, sigma, prev, _make_config())
+        w, _ = optimize_weights(mu, sigma, prev, _make_config())
         assert np.all(w >= -1e-8)
 
     def test_weights_within_cap(self) -> None:
@@ -82,15 +82,27 @@ class TestOptimizeWeightsInvariants:
         mu = np.ones(_N) * 0.08
         prev = np.ones(_N) / _N
         cfg = _make_config(max_position_weight=0.25)
-        w = optimize_weights(mu, sigma, prev, cfg)
+        w, _ = optimize_weights(mu, sigma, prev, cfg)
         assert np.all(w <= 0.25 + 1e-6)
 
     def test_returns_numpy_array(self) -> None:
         sigma = _make_sigma()
         mu = np.ones(_N) * 0.08
         prev = np.ones(_N) / _N
-        w = optimize_weights(mu, sigma, prev, _make_config())
+        w, _ = optimize_weights(mu, sigma, prev, _make_config())
         assert isinstance(w, np.ndarray)
+
+    def test_returns_tuple_of_array_and_str(self) -> None:
+        sigma = _make_sigma()
+        mu = np.ones(_N) * 0.08
+        prev = np.ones(_N) / _N
+        result = optimize_weights(mu, sigma, prev, _make_config())
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        weights, status = result
+        assert isinstance(weights, np.ndarray)
+        assert isinstance(status, str)
+        assert status in {"not_binding", "binding", "infeasible_relaxed"}
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +135,7 @@ class TestBehavioralChecks:
         actual_vol = float(np.sqrt(market_weights @ sigma @ market_weights))
         cfg = _make_config(vol_target=min(0.95, actual_vol + 0.15), turnover_penalty=0.0)
 
-        weights = optimize_weights(pi, sigma, market_weights, cfg)
+        weights, _ = optimize_weights(pi, sigma, market_weights, cfg)
 
         max_dev = float(np.max(np.abs(weights - market_weights)))
         assert max_dev < 0.05, (
@@ -143,7 +155,7 @@ class TestBehavioralChecks:
 
         prev = np.ones(_N) / _N
         cfg = _make_config(vol_target=0.95, turnover_penalty=0.0)
-        weights = optimize_weights(mu, sigma, prev, cfg)
+        weights, _ = optimize_weights(mu, sigma, prev, cfg)
 
         assert weights[0] >= 0.20, (
             f"Strong bullish signal (mu[0]=15%) should push asset 0 weight near cap; "
@@ -163,8 +175,8 @@ class TestBehavioralChecks:
         cfg_no_pen = _make_config(vol_target=0.95, turnover_penalty=0.0)
         cfg_high_pen = _make_config(vol_target=0.95, turnover_penalty=0.5)
 
-        w_no_pen = optimize_weights(mu, sigma, prev, cfg_no_pen)
-        w_high_pen = optimize_weights(mu, sigma, prev, cfg_high_pen)
+        w_no_pen, _ = optimize_weights(mu, sigma, prev, cfg_no_pen)
+        w_high_pen, _ = optimize_weights(mu, sigma, prev, cfg_high_pen)
 
         to_no_pen = compute_turnover(prev, w_no_pen)
         to_high_pen = compute_turnover(prev, w_high_pen)
@@ -177,7 +189,7 @@ class TestBehavioralChecks:
 
     def test_vol_target_binding(self) -> None:
         """When unconstrained solution exceeds vol_target, the constrained solution
-        should satisfy w @ Σ @ w ≤ vol_target².
+        should satisfy w @ Σ @ w ≤ vol_target² and report status="binding".
 
         Setup: high-vol assets (50% vol) with strong returns.  Unconstrained optimizer
         concentrates in them, pushing portfolio vol above 20%.  The vol constraint
@@ -197,23 +209,90 @@ class TestBehavioralChecks:
         cfg_loose = _make_config(
             vol_target=0.95, turnover_penalty=0.0, max_position_weight=0.25,
         )
-        w_loose = optimize_weights(mu, sigma, prev, cfg_loose)
+        w_loose, status_loose = optimize_weights(mu, sigma, prev, cfg_loose)
         vol_loose = float(np.sqrt(w_loose @ sigma @ w_loose))
 
         assert vol_loose > vol_target, (
             f"Unconstrained vol {vol_loose:.3f} should exceed target {vol_target}; "
             "test setup is wrong if this fails"
         )
+        assert status_loose == "not_binding", (
+            f"Loose vol target should yield not_binding, got {status_loose}"
+        )
 
-        # With vol constraint: must stay ≤ vol_target
+        # With vol constraint: must stay ≤ vol_target and report "binding"
         cfg_tight = _make_config(
             vol_target=vol_target, turnover_penalty=0.0, max_position_weight=0.25,
         )
-        w_tight = optimize_weights(mu, sigma, prev, cfg_tight)
+        w_tight, status_tight = optimize_weights(mu, sigma, prev, cfg_tight)
         vol_tight = float(np.sqrt(w_tight @ sigma @ w_tight))
 
         assert vol_tight <= vol_target + 0.001, (
             f"Constrained vol {vol_tight:.4f} must be ≤ vol_target+0.001={vol_target+0.001}"
+        )
+        assert status_tight == "binding", (
+            f"Vol-constrained solution should report binding, got {status_tight}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Vol constraint status
+# ---------------------------------------------------------------------------
+
+
+class TestVolConstraintStatus:
+    def test_not_binding_with_very_loose_vol_target(self) -> None:
+        """vol_target=0.95 is far above any realised vol — status must be not_binding."""
+        sigma = _make_sigma()
+        mu = np.ones(_N) * 0.08
+        prev = np.ones(_N) / _N
+        _, status = optimize_weights(mu, sigma, prev, _make_config(vol_target=0.95))
+        assert status == "not_binding"
+
+    def test_infeasible_relaxed_when_min_vol_exceeds_target(self) -> None:
+        """Assets with 40% vol, uncorrelated: min portfolio vol ≈ 23%.
+        vol_target=0.10 is below that minimum — constraint must be relaxed.
+        The returned weights must still be valid and status must be infeasible_relaxed.
+        """
+        n = 3
+        vols = np.full(n, 0.40)
+        sigma = np.diag(vols ** 2)  # independent assets, each 40% vol
+        # min-vol portfolio is equal-weight: vol = 40% / sqrt(3) ≈ 23.1%
+        mu = np.ones(n) * 0.10
+        prev = np.ones(n) / n
+        cfg = _make_config(vol_target=0.10, max_position_weight=0.50)
+
+        weights, status = optimize_weights(mu, sigma, prev, cfg)
+
+        assert status == "infeasible_relaxed", (
+            f"Expected infeasible_relaxed; got {status}"
+        )
+        assert abs(weights.sum() - 1.0) < 1e-6
+        assert np.all(weights >= -1e-8)
+        assert np.all(weights <= 0.50 + 1e-6)
+
+    def test_infeasible_relaxed_weights_differ_from_prev_when_views_strong(self) -> None:
+        """After dropping the vol constraint, the optimizer should move away from
+        equal weights when there is a strong directional view.
+        """
+        n = 3
+        sigma = np.diag([0.16, 0.16, 0.16])  # all 40% vol
+        # Asset 0 has strong alpha; assets 1-2 are neutral
+        mu = np.array([0.20, 0.05, 0.05])
+        prev = np.ones(n) / n
+        cfg = _make_config(
+            vol_target=0.10,       # infeasible: min vol ≈ 23%
+            max_position_weight=0.50,
+            turnover_penalty=0.0,
+        )
+
+        weights, status = optimize_weights(mu, sigma, prev, cfg)
+
+        assert status == "infeasible_relaxed"
+        # Asset 0 should be overweighted relative to equal (1/3 ≈ 0.33)
+        assert weights[0] > 0.40, (
+            f"With strong alpha on asset 0, relaxed optimizer should overweight it; "
+            f"got {weights[0]:.3f}"
         )
 
 
@@ -230,7 +309,7 @@ class TestSolverFallback:
         prev = np.ones(_N) / _N
         cfg = _make_config(solver_primary="FAKE_SOLVER", solver_fallback="SCS")
 
-        weights = optimize_weights(mu, sigma, prev, cfg)
+        weights, _ = optimize_weights(mu, sigma, prev, cfg)
 
         assert abs(weights.sum() - 1.0) < 1e-6
         assert np.all(weights >= -1e-8)
@@ -243,7 +322,7 @@ class TestSolverFallback:
         prev = np.ones(_N) / _N
         cfg = _make_config(solver_primary="FAKE_A", solver_fallback="FAKE_B")
 
-        weights = optimize_weights(mu, sigma, prev, cfg)
+        weights, _ = optimize_weights(mu, sigma, prev, cfg)
 
         np.testing.assert_array_equal(weights, prev)
 

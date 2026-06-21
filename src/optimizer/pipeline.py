@@ -18,7 +18,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from config import load_config
-from db.models import PortfolioSnapshot, TargetWeight, View
+from db.models import PortfolioSnapshot, RiskEvent, TargetWeight, View
 from execution.costs import estimate_portfolio_rebalance_cost
 from optimizer.black_litterman import black_litterman_posterior, build_picking_matrix
 from optimizer.equilibrium import get_prior
@@ -111,7 +111,12 @@ def _run(date: str | datetime.date, db: Engine, mode: str) -> dict:
     mu_post, sigma_post = black_litterman_posterior(pi, sigma, P, Q, omega, tau)
 
     # Step 5 — constrained mean-variance optimization
-    candidate_weights = optimize_weights(mu_post, sigma_post, prev_weights, cfg)
+    candidate_weights, vol_constraint_status = optimize_weights(
+        mu_post, sigma_post, prev_weights, cfg
+    )
+    _log_vol_constraint_event(
+        rebalance_date, vol_constraint_status, candidate_weights, sigma_post, cfg, db
+    )
 
     # Step 6 — risk checks; circuit breaker may revert to prev_weights
     final_weights, risk_results = run_all_risk_checks(
@@ -133,7 +138,7 @@ def _run(date: str | datetime.date, db: Engine, mode: str) -> dict:
     logger.info(
         "run_optimization_pipeline  date=%s  mode=%s  "
         "E[r]=%.2f%%  E[σ]=%.2f%%  turnover=%.4f  cost=$%.2f  "
-        "risk_triggered=%s  views=%s",
+        "risk_triggered=%s  views=%s  vol_status=%s",
         rebalance_date,
         mode,
         metrics["expected_return"] * 100,
@@ -142,6 +147,7 @@ def _run(date: str | datetime.date, db: Engine, mode: str) -> dict:
         estimated_cost,
         any_triggered,
         views_available,
+        vol_constraint_status,
     )
 
     return {
@@ -155,6 +161,7 @@ def _run(date: str | datetime.date, db: Engine, mode: str) -> dict:
         "any_risk_triggered": any_triggered,
         "mode": mode,
         "views_available": views_available,
+        "vol_constraint_status": vol_constraint_status,
     }
 
 
@@ -284,6 +291,34 @@ def _write_target_weights(
         session.execute(delete(TargetWeight).where(TargetWeight.date == date))
         for ticker, w in zip(tickers, weights):
             session.add(TargetWeight(date=date, sector=ticker, weight=float(w)))
+        session.commit()
+
+
+def _log_vol_constraint_event(
+    date: datetime.date,
+    status: str,
+    weights: np.ndarray,
+    sigma: np.ndarray,
+    cfg,
+    db: Engine,
+) -> None:
+    """Write vol_constraint status as a risk_events row for every rebalance."""
+    actual_vol = float(np.sqrt(weights @ sigma @ weights))
+    triggered = status == "infeasible_relaxed"
+    with Session(db) as session:
+        session.add(RiskEvent(
+            date=date,
+            check_name="vol_constraint",
+            triggered=triggered,
+            value=actual_vol,
+            threshold=cfg.portfolio.vol_target,
+            action_taken="relax_vol_constraint" if triggered else "none",
+            message=(
+                f"vol_constraint_status={status}  "
+                f"actual_vol={actual_vol:.4f}  "
+                f"vol_target={cfg.portfolio.vol_target:.4f}"
+            ),
+        ))
         session.commit()
 
 
