@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class NewsSignal(BaseModel):
@@ -66,6 +66,19 @@ class PolymarketSignal(BaseModel):
     driving_events: list[dict]
     time_horizon: Literal["short", "medium", "long"]
     overall_confidence: float = Field(ge=0.0, le=1.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def clean_implied_probs(cls, data: object) -> object:
+        # LLM copies current_prob=None for markets with no DB data; strip before
+        # field-level coercion runs — field_validator(mode="before") fires too late
+        # in Pydantic v2 for dict[str, float] item coercion.
+        if isinstance(data, dict):
+            probs = data.get("implied_probs")
+            if isinstance(probs, dict):
+                data = dict(data)
+                data["implied_probs"] = {k: v for k, v in probs.items() if v is not None}
+        return data
 
     @field_validator("implied_probs")
     @classmethod

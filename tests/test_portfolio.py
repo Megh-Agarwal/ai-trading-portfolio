@@ -411,6 +411,6 @@ class TestPortfolioConfig:
         cfg = load_config("optimizer")
         assert cfg.portfolio.max_position_weight == pytest.approx(0.25)
         assert cfg.portfolio.vol_target == pytest.approx(0.12)
-        assert cfg.portfolio.turnover_penalty == pytest.approx(0.10)
+        assert cfg.portfolio.turnover_penalty == pytest.approx(0.002)
         assert cfg.portfolio.solver_primary == "CLARABEL"
         assert cfg.portfolio.solver_fallback == "SCS"

@@ -109,29 +109,76 @@ def generate_orders(
     return orders
 
 
-def validate_orders_affordable(orders: list[Order], available_cash: float) -> bool:
-    """Check that buy orders are covered by available cash plus sell proceeds.
+def validate_orders_affordable(
+    orders: list[Order],
+    available_cash: float,
+    cost_rate: float = 0.0,
+) -> list[Order]:
+    """Ensure buy orders can be funded by available cash and net sell proceeds.
 
-    Assumes sells execute before buys (same-day closing price), so sell
-    proceeds are immediately available to fund buys.
+    Uses cost-aware arithmetic:
+      funds available  = cash + gross_sell_value × (1 − cost_rate)
+      required capital = gross_buy_value  × (1 + cost_rate)
+
+    If the rebalance is unaffordable, all buy orders are proportionally scaled
+    down (flooring share counts to keep them integral) until the constraint is
+    satisfied.  A WARNING is logged with the scale factor.  Sell orders are
+    never modified.
 
     Args:
-        orders: Output of generate_orders.
+        orders: Output of generate_orders (sells should precede buys).
         available_cash: Current CASH shares (== dollars) before any trades.
+        cost_rate: One-way transaction cost as a decimal (e.g. 0.001 for 10 bps).
+                   Defaults to 0.0 for backward compatibility with call sites
+                   that do not have a config available.
 
     Returns:
-        True if affordable, False (and logs WARNING) if not.
+        List of orders, with buy quantities possibly reduced.  Sell orders and
+        orders that remain affordable are returned unchanged.
     """
-    sell_proceeds = sum(o.estimated_value for o in orders if o.side == "sell")
-    buy_total = sum(o.estimated_value for o in orders if o.side == "buy")
-    total_available = available_cash + sell_proceeds
+    gross_sells = sum(o.estimated_value for o in orders if o.side == "sell")
+    gross_buys = sum(o.estimated_value for o in orders if o.side == "buy")
 
-    if total_available < buy_total:
+    funds_available = available_cash + gross_sells * (1.0 - cost_rate)
+    total_buy_cost = gross_buys * (1.0 + cost_rate)
+
+    if gross_buys == 0 or total_buy_cost <= funds_available:
+        return orders
+
+    if funds_available <= 0:
         logger.warning(
-            "validate_orders_affordable: INFEASIBLE — need $%.2f, have $%.2f "
-            "(cash=%.2f + sells=%.2f)",
-            buy_total, total_available, available_cash, sell_proceeds,
+            "validate_orders_affordable: no funds available after sell costs "
+            "(cash=%.2f, net_sells=%.2f) — dropping all buy orders",
+            available_cash, gross_sells * (1.0 - cost_rate),
         )
-        return False
+        return [o for o in orders if o.side == "sell"]
 
-    return True
+    scale = funds_available / total_buy_cost
+    logger.warning(
+        "validate_orders_affordable: scaling buy orders by %.6f "
+        "(need $%.2f incl. costs, have $%.2f after sell costs)",
+        scale, total_buy_cost, funds_available,
+    )
+
+    scaled: list[Order] = []
+    for o in orders:
+        if o.side != "buy":
+            scaled.append(o)
+            continue
+        new_shares = math.floor(o.shares * scale)
+        if new_shares == 0:
+            logger.warning(
+                "validate_orders_affordable: %s scaled to 0 shares — order dropped",
+                o.ticker,
+            )
+            continue
+        scaled.append(Order(
+            ticker=o.ticker,
+            side=o.side,
+            shares=new_shares,
+            estimated_price=o.estimated_price,
+            estimated_value=new_shares * o.estimated_price,
+            reason=o.reason + f" [scaled ×{scale:.4f}]",
+        ))
+
+    return scaled

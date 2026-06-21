@@ -13,8 +13,9 @@ from db.models import Base, Signal, View
 
 # These constants were moved to config/optimizer.yaml (ADR-012 / Blocker 2).
 # Test file keeps local copies matching the config defaults so arithmetic tests pass.
-_MAX_EXCESS_RETURN_WEEKLY: float = 0.05 / 52
+_MAX_EXCESS_RETURN_ANNUAL: float = 0.05
 _OMEGA_BASE: float = 0.0001
+_WEEKS_PER_YEAR: int = 52
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -130,7 +131,7 @@ class TestZeroSignal:
         db = _make_engine()
         _seed_signals(db)
         _, omega = build_views(_DATE, db)
-        expected = _OMEGA_BASE / _MIN_CONVICTION
+        expected = _OMEGA_BASE * _WEEKS_PER_YEAR / _MIN_CONVICTION
         np.testing.assert_allclose(np.diag(omega), expected, rtol=1e-9)
 
     def test_views_written_to_db_with_zero_expected_return(self):
@@ -155,7 +156,7 @@ class TestMacroRiskOffDampening:
         """Expected Q value with neutral regime (scale=0.75) for comparison."""
         weights = {"news": 0.4, "macro": 0.3, "polymarket": 0.3}
         raw = weights["news"] * news_signal * news_conv + weights["polymarket"] * poly_signal * poly_conf
-        return raw * 0.75 * _MAX_EXCESS_RETURN_WEEKLY   # neutral scale = 0.75
+        return raw * 0.75 * _MAX_EXCESS_RETURN_ANNUAL   # neutral scale = 0.75
 
     def test_risk_off_produces_smaller_q_than_neutral(self):
         db_risk_off = _make_engine()
@@ -222,7 +223,7 @@ class TestQArithmetic:
         _seed_signals(db, news_signal=1.0, news_conv=1.0, macro_regime=0.0)
         q, _ = build_views(_DATE, db)
         weights_news = 0.4
-        expected = weights_news * 1.0 * 1.0 * 0.75 * _MAX_EXCESS_RETURN_WEEKLY
+        expected = weights_news * 1.0 * 1.0 * 0.75 * _MAX_EXCESS_RETURN_ANNUAL
         np.testing.assert_allclose(q, expected, rtol=1e-9)
 
     def test_q_is_positive_for_positive_signal(self):
@@ -279,7 +280,7 @@ class TestOmegaArithmetic:
         w_news = 0.4
         # macro_conf=0 and poly_conf=0, so agg_conviction = w_news * news_conv * scale
         expected_conviction = w_news * news_conv * regime_scale
-        expected_omega = _OMEGA_BASE / max(expected_conviction, _MIN_CONVICTION)
+        expected_omega = _OMEGA_BASE * _WEEKS_PER_YEAR / max(expected_conviction, _MIN_CONVICTION)
 
         db = _make_engine()
         _seed_signals(db, news_signal=0.5, news_conv=news_conv)

@@ -85,7 +85,7 @@ def build_views(
                  Must sum to ≤ 1.0. Overrides mode-based config weights.
 
     Returns:
-        Q: np.ndarray of shape (N,) — weekly expected excess returns per sector.
+        Q: np.ndarray of shape (N,) — annualised expected excess returns per sector.
         Omega: np.ndarray of shape (N, N) — diagonal view-uncertainty matrix.
 
     Raises:
@@ -93,7 +93,7 @@ def build_views(
     """
     cfg = load_config("optimizer")
     agg = cfg.aggregator
-    max_return_weekly = agg.max_excess_return_annual / _WEEKS_PER_YEAR
+    max_return_annual = agg.max_excess_return_annual
     omega_base = agg.omega_base
     rm_intercept = agg.regime_scale_intercept
     rm_slope = agg.regime_scale_slope
@@ -157,7 +157,7 @@ def build_views(
         )
         scaled_signal = raw_signal * regime_scale
 
-        q = scaled_signal * max_return_weekly
+        q = scaled_signal * max_return_annual
         q_values.append(q)
 
         agg_conviction = (
@@ -166,7 +166,7 @@ def build_views(
             + weights["polymarket"] * poly_conf
         ) * regime_scale
 
-        omega_entry = omega_base / max(agg_conviction, _MIN_CONVICTION)
+        omega_entry = omega_base * _WEEKS_PER_YEAR / max(agg_conviction, _MIN_CONVICTION)
         omega_diag.append(omega_entry)
 
         view_rows.append(

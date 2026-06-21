@@ -4,6 +4,32 @@ Each entry: date, context, decision, consequences.
 
 ---
 
+## ADR-021 — Turnover penalty recalibration from 0.10 → 0.002 (provisional)
+
+**Date:** 2026-06-21
+
+**Context:** After the ADR-020 units fix, the first real run (2026-06-13, backtest mode) produced zero orders and effectively zero turnover despite μ* having a 4.06pp cross-sectional spread (XLE at 0.103% vs XLK at 4.160%). The unconstrained tangency portfolio would put 38% in XLK. The optimizer was seeing the correct signal but refusing to act on it.
+
+Diagnosis: `turnover_penalty = 0.10` in optimizer.yaml is the CVXPY γ coefficient in the objective `μ@w − (λ/2)w@Σw − γ‖w−w_prev‖₁`. With μ in annual units, shifting 1pp of weight from XLE to XLK gains `4.06% × 0.01 = 0.041%` per year but costs `0.10 × 2 × 0.01 = 0.20%` in penalty — a 5:1 penalty-to-gain ratio. No move was ever net-positive by the objective, so the optimizer sat at equal weights regardless of signal strength. The old value implicitly assumed returns were in a unit where γ=0.1 was proportionate; at annual-scale returns it corresponds to a ~10% one-way transaction cost per unit of weight — appropriate for illiquid private assets, not 3bps sector ETF trades.
+
+**Decision:** Set `turnover_penalty = 0.002` as a provisional value. Calibration logic: the real 2026-06-13 signal shows ~4pp expected-return spread between XLK and XLE. At γ=0.002, the L1 cost of a 1pp move is `0.002 × 2 × 0.01 = 0.00004 = 0.004%`, well below the 0.041% gain — so the optimizer will trade on the signal. At the same time γ=0.002 is ~3× larger than actual 3bp one-way ETF transaction costs (`transaction_cost_bps: 10` in config = 0.001 per unit), providing a conservative buffer against noise-driven churn. This value is explicitly **not** a final calibration.
+
+**Consequences:** Non-zero orders and turnover are now expected when the BL signal produces cross-sectional differentiation. The actual calibration must be done in M5 via a sensitivity sweep across several weeks of real backtest data — testing γ ∈ {0.001, 0.002, 0.005, 0.01} and measuring resulting weekly turnover, transaction cost drag, and net Sharpe — before treating any value as production-ready. Both occurrences of `turnover_penalty` in `optimizer.yaml` (top-level and under `portfolio:`) were updated; they must remain in sync.
+
+---
+
+## ADR-020 — Fix Q and Ω units mismatch in Black-Litterman views
+
+**Date:** 2026-06-21
+
+**Context:** The first real run (2026-06-13, backtest mode) showed μ* = [0.0%, 0.3%] against π = [-0.2%, 6.0%] — the BL posterior was almost entirely anchored to the prior, with agent signals having no visible effect. Diagnosis: `build_views()` in `aggregator/views.py` computed Q by dividing `max_excess_return_annual` by 52 (weekly scale) and constructed Ω using `omega_base / max(conviction, _MIN_CONVICTION)` without an annualisation factor (also weekly-variance scale). Meanwhile π and Σ are both fully annualised: Σ uses `daily_cov × 252` in `equilibrium.py`, and `risk_aversion`, `vol_target` in `optimizer.yaml` are stated as annual. The BL formula `μ* = M⁻¹((τΣ)⁻¹π + P'Ω⁻¹Q)` adds annual and weekly terms without conversion — causing Ω⁻¹ (weekly scale ≈ 6,238 for a typical sector) to dominate (τΣ)⁻¹ (annual scale ≈ 1,389) by ~4×, while Q was 52× too small, crushing μ* to near-zero. The same bug existed in `_load_views()` in `optimizer/pipeline.py`, which independently reconstructs Ω from stored confidence using the same unscaled formula — this was the reason a partial fix to `views.py` alone only raised μ* to [0.2%, 1.0%] rather than the expected range. The bug went undetected in M3 because the notebook helper `write_annual_views` bypassed `build_views` and wrote annualised Q directly to the DB; unit tests checked relative relationships (larger/smaller) rather than absolute BL output.
+
+**Decision:** Remove the ÷52 factor from Q in `build_views()` — `max_excess_return_annual` is used directly, keeping Q in annual terms. Multiply Ω by `_WEEKS_PER_YEAR = 52` in both `build_views()` and `_load_views()` — `omega_base` (0.0001) is calibrated as weekly variance, so ×52 converts it to annual variance matching Σ. No changes to `optimizer.yaml`, `equilibrium.py`, or `black_litterman.py` — π, Σ, risk_aversion, and vol_target are confirmed correct and annual already.
+
+**Consequences:** μ* is now [0.1%, 4.2%] for the 2026-06-13 backtest run, appropriately between π's [-0.2%, 6.0%] range and the agent-driven Q signal. BL blending is now mathematically consistent: all four quantities (Q, Ω, π, Σ) are in annual units. The `omega_base` YAML comment ("view variance at unit conviction (~1bp² weekly)") remains accurate — the weekly calibration is intentional; ×52 at use-site converts it.
+
+---
+
 ## ADR-016 — Market-cap weights for Black-Litterman equilibrium prior
 
 **Date:** 2026-06-15

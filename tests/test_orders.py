@@ -181,35 +181,146 @@ class TestRoundsDownNeverUp:
 
 
 class TestAffordabilityCheckCatchesInfeasibleSet:
-    def test_affordability_check_catches_infeasible_set(self) -> None:
-        """Buy total exceeds cash + sell proceeds → returns False."""
+    def test_affordability_scales_buys_when_infeasible(self) -> None:
+        """Buy total exceeds cash + sell proceeds → buy shares scaled down."""
         orders = [
             Order("XLK", "buy", 100, 200.0, 20_000.0, "test"),
             Order("XLF", "sell", 50, 50.0, 2_500.0, "test"),
         ]
-        # available = 10_000 + 2_500 = 12_500 < 20_000
-        assert validate_orders_affordable(orders, available_cash=10_000.0) is False
+        # available = 10_000 + 2_500 = 12_500 < 20_000 → scale = 12_500/20_000 = 0.625
+        result = validate_orders_affordable(orders, available_cash=10_000.0)
+        buys = [o for o in result if o.side == "buy"]
+        sells = [o for o in result if o.side == "sell"]
+        assert len(buys) == 1
+        assert buys[0].shares < 100          # scaled down
+        assert buys[0].shares == 62          # floor(100 × 0.625) = 62
+        assert buys[0].estimated_value == pytest.approx(62 * 200.0)
+        assert sells[0].shares == 50         # sell unchanged
 
     def test_affordability_passes_when_sells_cover_buys(self) -> None:
-        """Sell proceeds bridge the gap → returns True."""
+        """Sell proceeds bridge the gap → orders returned unchanged."""
         orders = [
             Order("XLK", "buy", 100, 200.0, 20_000.0, "test"),
             Order("XLF", "sell", 300, 50.0, 15_000.0, "test"),
         ]
-        # available = 6_000 + 15_000 = 21_000 >= 20_000
-        assert validate_orders_affordable(orders, available_cash=6_000.0) is True
+        # available = 6_000 + 15_000 = 21_000 >= 20_000 → no scaling
+        result = validate_orders_affordable(orders, available_cash=6_000.0)
+        buys = [o for o in result if o.side == "buy"]
+        assert buys[0].shares == 100         # unchanged
 
     def test_affordability_with_no_orders(self) -> None:
-        assert validate_orders_affordable([], available_cash=0.0) is True
+        assert validate_orders_affordable([], available_cash=0.0) == []
 
     def test_affordability_buys_only_within_cash(self) -> None:
         orders = [Order("XLK", "buy", 10, 100.0, 1_000.0, "test")]
-        assert validate_orders_affordable(orders, available_cash=1_000.0) is True
-        assert validate_orders_affordable(orders, available_cash=999.99) is False
+        # Exactly affordable → unchanged
+        result_exact = validate_orders_affordable(orders, available_cash=1_000.0)
+        assert result_exact[0].shares == 10
+        # Marginal shortfall → scale = 999.99/1000 = 0.99999; floor(10 × 0.99999) = 9
+        result_short = validate_orders_affordable(orders, available_cash=999.99)
+        assert result_short[0].shares == 9
 
     def test_affordability_sells_only_always_passes(self) -> None:
         orders = [Order("XLK", "sell", 50, 100.0, 5_000.0, "test")]
-        assert validate_orders_affordable(orders, available_cash=0.0) is True
+        result = validate_orders_affordable(orders, available_cash=0.0)
+        assert result[0].shares == 50        # sell unchanged
+
+
+# ---------------------------------------------------------------------------
+# Affordability: cost-aware scaling (the real-world sequential-week scenario)
+# ---------------------------------------------------------------------------
+
+
+class TestAffordabilityScaleDownWithCosts:
+    """Verify graceful degradation when transaction costs on both legs create a
+    shortfall — the scenario that fires in real sequential-week operation when
+    the portfolio is nearly fully invested and turnover is large.
+
+    Portfolio: $1 000 000, CASH = $1 000 (0.1%).
+    Current:   XLK = 9 990 shares @ $100 = $999 000 (99.9% invested).
+    Target:    sell all XLK, buy XLF @ $50/share up to ~99.9%.
+
+    Raw orders from generate_orders:
+      SELL XLK 9 990 shares  → gross = $999 000
+      BUY  XLF 19 980 shares → gross = $999 000
+
+    Without cost_rate (0.0): available = $1 000 + $999 000 = $1 000 000 ≥ $999 000 → OK.
+    With cost_rate = 0.001 (10 bps):
+      funds_available  = $1 000 + $999 000 × 0.999 = $999 001
+      total_buy_cost   = $999 000 × 1.001           = $999 999
+      shortfall                                      = $998   → scaling required.
+    """
+
+    _COST_RATE = 0.001  # 10 bps one-way
+
+    def _make_orders(self) -> list[Order]:
+        return [
+            Order("XLK", "sell", 9_990, 100.0, 999_000.0, "test"),
+            Order("XLF", "buy", 19_980, 50.0, 999_000.0, "test"),
+        ]
+
+    def test_no_scaling_without_cost_rate(self) -> None:
+        """At cost_rate=0.0 the same orders are affordable — no scaling."""
+        result = validate_orders_affordable(
+            self._make_orders(), available_cash=1_000.0, cost_rate=0.0
+        )
+        buys = [o for o in result if o.side == "buy"]
+        assert buys[0].shares == 19_980
+
+    def test_costs_create_shortfall_and_buys_are_scaled(self) -> None:
+        """At cost_rate=0.001, a $998 shortfall triggers buy scale-down."""
+        result = validate_orders_affordable(
+            self._make_orders(), available_cash=1_000.0, cost_rate=self._COST_RATE
+        )
+        buys = [o for o in result if o.side == "buy"]
+        assert len(buys) == 1
+        assert buys[0].shares < 19_980      # scaled down
+
+    def test_sell_order_is_unchanged_after_scaling(self) -> None:
+        """Sell orders must never be modified."""
+        result = validate_orders_affordable(
+            self._make_orders(), available_cash=1_000.0, cost_rate=self._COST_RATE
+        )
+        sells = [o for o in result if o.side == "sell"]
+        assert sells[0].shares == 9_990
+
+    def test_scaled_result_is_affordable(self) -> None:
+        """After scaling, total buy cost must not exceed available funds."""
+        result = validate_orders_affordable(
+            self._make_orders(), available_cash=1_000.0, cost_rate=self._COST_RATE
+        )
+        sells = [o for o in result if o.side == "sell"]
+        buys = [o for o in result if o.side == "buy"]
+        gross_sells = sum(o.estimated_value for o in sells)
+        gross_buys = sum(o.estimated_value for o in buys)
+        funds = 1_000.0 + gross_sells * (1.0 - self._COST_RATE)
+        required = gross_buys * (1.0 + self._COST_RATE)
+        assert required <= funds + 1e-6     # small tolerance for float arithmetic
+
+    def test_no_negative_cash_after_fill_simulation(self) -> None:
+        """The fill simulator must not raise NegativeCashError on scaled orders."""
+        from execution.fill_simulator import apply_fills_to_state, simulate_all_fills
+        from config import TransactionCostsConfig
+        from db.models import Base
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+
+        orders = validate_orders_affordable(
+            self._make_orders(), available_cash=1_000.0, cost_rate=self._COST_RATE
+        )
+        tc_cfg = TransactionCostsConfig(
+            spread_bps=5.0, slippage_bps=5.0, min_trade_threshold=0.001
+        )
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        current_positions = {"CASH": 1_000.0, "XLK": 9_990.0}
+
+        with Session(engine) as session:
+            fills = simulate_all_fills(orders, "2024-01-05", session, tc_cfg)
+            # Must not raise NegativeCashError
+            apply_fills_to_state("2024-01-05", fills, current_positions, session)
+
+        engine.dispose()
 
 
 # ---------------------------------------------------------------------------

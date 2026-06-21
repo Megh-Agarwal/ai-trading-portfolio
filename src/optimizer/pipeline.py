@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 # Matches views.py — floor used when no conviction is stored
 _MIN_CONVICTION: float = 0.01
+# Matches views.py — used to convert weekly omega_base to annual variance
+_WEEKS_PER_YEAR: int = 52
 # Used when no portfolio snapshot exists yet (first run)
 _FALLBACK_PORTFOLIO_VALUE: float = 1_000_000.0
 
@@ -179,7 +181,7 @@ def _load_views(
     """Load Q and Omega from the views table.
 
     Omega is reconstructed from stored confidence using the same formula as
-    views.py: omega_i = omega_base / max(confidence_i, _MIN_CONVICTION).
+    views.py: omega_i = omega_base * _WEEKS_PER_YEAR / max(confidence_i, _MIN_CONVICTION).
 
     Returns (views_available, Q, Omega).
     """
@@ -191,7 +193,7 @@ def _load_views(
         ).all()
 
     omega_base: float = cfg.aggregator.omega_base
-    large_uncertainty = omega_base / _MIN_CONVICTION
+    large_uncertainty = omega_base * _WEEKS_PER_YEAR / _MIN_CONVICTION
 
     if not rows:
         logger.warning(
@@ -213,7 +215,7 @@ def _load_views(
             q, conf = view_by_sector[ticker]
             q_values.append(float(q) if q is not None else 0.0)
             conviction = float(conf) if conf is not None else 0.0
-            omega_diag.append(omega_base / max(conviction, _MIN_CONVICTION))
+            omega_diag.append(omega_base * _WEEKS_PER_YEAR / max(conviction, _MIN_CONVICTION))
         else:
             # Sector missing from views — treat as no-view (high uncertainty, zero Q)
             q_values.append(0.0)

@@ -247,10 +247,9 @@ def run_weekly(
     summary["orders_count"] = len(orders)
 
     available_cash = current_positions.get("CASH", 0.0)
-    if not validate_orders_affordable(orders, available_cash):
-        logger.warning(
-            "Affordability check failed — fill simulator will guard against negative cash"
-        )
+    tc = cfg.transaction_costs
+    cost_rate = (tc.spread_bps + tc.slippage_bps) / 10_000.0
+    orders = validate_orders_affordable(orders, available_cash, cost_rate=cost_rate)
 
     # ── steps 6-8: fills + state update + snapshot ─────────────────────────
     with Session(db_engine) as session:
