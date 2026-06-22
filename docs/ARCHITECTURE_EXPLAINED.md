@@ -30,6 +30,10 @@ Once a week, this system reads the latest financial news, economic data, and pre
 
 **Sector ETF** — An exchange-traded fund that holds shares in many companies within one industry segment. Buying one share of XLK, for example, gives you exposure to Apple, Microsoft, Nvidia, and 70+ other technology companies simultaneously. The 10 ETFs in this system are: XLK (Tech), XLF (Financials), XLV (Health Care), XLY (Consumer Discretionary), XLP (Consumer Staples), XLE (Energy), XLI (Industrials), XLB (Materials), XLRE (Real Estate), XLU (Utilities).
 
+**Prediction market** — A marketplace where people stake real money on yes/no questions about future events. Example question: "Will the Federal Reserve cut interest rates before July 2026?" People who think YES will happen buy YES shares; people who think NO will happen buy NO shares. The more people buy YES, the higher the YES share price climbs. When the event resolves, YES shares pay out $1 and NO shares pay $0 (or vice versa). Because real money is at stake, prediction markets tend to be well-calibrated — the crowd has a financial incentive to be right, not just confident.
+
+**Implied probability** — The probability embedded in a prediction market's current price. If YES shares currently cost $0.80, that means: to break even, you need at least an 80% chance of YES happening. So the market is collectively "implying" there's an 80% chance the event occurs. An implied probability of 0.03 (3%) means the market thinks it's very unlikely. An implied probability of 0.97 (97%) means the market thinks it's nearly certain. Implied probability is just the YES price expressed as a fraction — no formula needed.
+
 **Sentiment** — How bullish or bearish a piece of news or an agent's view is toward a given sector. Represented as a number from −1.0 (very bearish — expecting price to fall) to +1.0 (very bullish — expecting price to rise). Zero means no strong view.
 
 **Conviction** — How confident an agent is in its sentiment. A number from 0.0 to 1.0. Low conviction (e.g. 0.2) means "I have a weak opinion"; high conviction (e.g. 0.8) means "I feel quite sure." Conviction controls how much the agent's opinion is allowed to move the final portfolio allocation — see [Section 5](#5-how-the-three-agents-opinions-get-combined).
@@ -218,21 +222,111 @@ It also pulls up to 10 news articles each from XLF (financials) and XLI (industr
 
 ### Agent 3 — PolymarketAgent (`agents/polymarket_agent.py`)
 
-**What data is pulled:** For each of the 13 curated markets in `polymarket_markets.yaml`, the agent finds the most recent row in `polymarket_raw` on or before the analysis date, plus the earliest row within the last 30 days (to compute the trend). This gives: `current_prob` (today's implied YES probability), `prob_30d_ago` (probability 30 days ago), `volume_usd` (total traded volume in dollars), and `days_to_resolution` (when the market closes).
+#### The core idea: betting markets as a news source
 
-**What goes to the LLM:** A list of 13 market objects, each with: the numeric market ID, the question text, a confidence rating (`high`/`medium`/`low`), the probabilities above, volume, days to resolution, and the sector impact mapping from the YAML config (e.g., `XLU: positive_if_yes`, `XLF: negative_if_yes`). The tool is `report_polymarket_tilts`.
+Polymarket is a prediction market. Right now there are active questions like:
+- "Will the Fed cut interest rates before July 2026?" (YES currently at 3% — the crowd thinks almost certainly not)
+- "Will the US enter a recession in 2026?" (YES currently at 17% — the crowd thinks unlikely)
+- "Will oil prices exceed $90/barrel by year end?" (YES at 42% — genuinely uncertain)
 
-**What comes back:** A `PolymarketSignal` with six fields:
-- `judgments`: a scratchpad where the model notes any cases where mechanical rule-application would be wrong (e.g., two correlated markets double-counting the same risk).
-- `implied_probs`: a dict copying the current probabilities back (market_id → float in `[0.0, 1.0]`). If the database has no data for a market (as happens on historical dates before Polymarket data was collected), the value is `None` and gets stripped before validation.
-- `sector_tilts`: the key output — dict mapping each ETF ticker to an aggregate tilt in `[−1.0, +1.0]`, representing the net effect of all 13 markets on that sector's outlook.
-- `driving_events`: list of `{sector, market_question, reasoning}` dicts, one per sector with |tilt| ≥ 0.05.
-- `time_horizon`: `"short"`, `"medium"`, or `"long"`.
-- `overall_confidence`: a single float in `[0.0, 1.0]` for the whole output (not per-sector).
+Each question has an implied probability — the current YES price expressed as a percentage. The crowd of bettors, staking real money, has collectively assigned a probability to each outcome.
 
-**What gets written to the database:** 10 rows in `signals`, one per sector. `agent_name = "events"`, `signal_value = sector_tilt`, `confidence = overall_confidence` (the same value for all 10 rows).
+The key insight is: **these probabilities are directly relevant to specific stock sectors.** Whether the Fed cuts rates matters a lot to utilities and real estate stocks (which behave like bonds and benefit from lower rates) but hurts bank stocks (which earn money on the spread between borrowing and lending rates — lower rates squeeze that spread). A recession being likely is bad for cyclical sectors like energy and industrials, but defensive sectors like healthcare and consumer staples hold up.
 
-**Real example (2026-06-13):** All 13 markets had data (current_prob was not None). The model assigned XLU = −0.18 (rate cuts not expected → bad for rate-sensitive utilities) and XLE = +0.18 (no recession expected → positive for energy demand). Overall confidence: 0.58.
+So if you know the crowd's best guess on 13 such questions, you can infer something about which sectors should be tilted up or down this week.
+
+#### The 13 curated questions
+
+The file `config/polymarket_markets.yaml` contains 13 hand-picked questions, chosen because they are macro-relevant and cover all 10 ETF sectors. For each question, the YAML also contains a pre-defined sector impact map, for example:
+
+```
+question: "Will the Fed cut rates before July 2026?"
+sector_impacts:
+  XLU: positive_if_yes     # utilities benefit from rate cuts
+  XLRE: positive_if_yes    # real estate benefits from rate cuts
+  XLF: negative_if_yes     # banks earn less when rates are cut
+  XLK: neutral             # tech is not strongly rate-sensitive
+```
+
+This mapping is human-authored (not learned from data). It encodes economic intuition about which sectors are helped or hurt by each type of event.
+
+#### What data is pulled
+
+For each of the 13 questions, the agent queries `polymarket_raw` for:
+- `current_prob` — the implied YES probability as of the analysis date (e.g., 0.03 = 3%)
+- `prob_30d_ago` — what the probability was 30 days earlier (to see the trend)
+- `volume_usd` — total dollars traded in this market (a proxy for how seriously to take it)
+- `days_to_resolution` — when the question closes (a market resolving tomorrow is more actionable than one resolving in two years)
+
+#### How a probability becomes a sector tilt — step by step
+
+The LLM is given the question, the current probability, the trend, the volume, and the sector impact map. Its job is to produce a **sector tilt** for each of the 10 ETFs: a number from −1.0 to +1.0 saying whether upcoming events look good or bad for that sector.
+
+The prompt instructs it to reason roughly like this (using "Will the Fed cut rates?" as the example):
+
+**Step 1 — Centre the probability around neutral.**
+A probability of 0.5 (50/50) means no information — ignore it. Anything above 0.5 leans YES; anything below leans NO. The "signal strength" is how far from 0.5 the probability is:
+```
+signal = current_prob − 0.5
+       = 0.03 − 0.50 = −0.47   (strongly leans NO: rate cut is very unlikely)
+```
+
+**Step 2 — Apply the sector impact direction.**
+The YAML says XLU is `positive_if_yes`. Since YES is very unlikely (signal is −0.47), that's bad for XLU:
+```
+raw_tilt_for_XLU = signal × direction
+                 = −0.47 × (+1)  = −0.47
+```
+For XLF (`negative_if_yes`), the opposite: unlikely rate cut is good for banks:
+```
+raw_tilt_for_XLF = −0.47 × (−1) = +0.47
+```
+
+**Step 3 — Discount by how trustworthy the market is.**
+Not all 13 markets deserve equal weight. The model discounts each signal by:
+- **Volume** — a market with $500k in volume is more trustworthy than one with $5k. Low volume means the crowd is thin and the price can be moved by one big bettor.
+- **Days to resolution** — a market resolving in 2 days is very actionable; one resolving in 18 months is too far away to affect this week's portfolio.
+- **Confidence tier** — the YAML assigns each market a `high`/`medium`/`low` confidence rating based on how directly relevant it is to the sector universe. High-confidence markets discount less; low-confidence markets get heavily discounted.
+
+After these discounts, the raw tilt of −0.47 might become −0.18 for XLU and +0.18 for XLF.
+
+**Step 4 — Combine all 13 markets per sector.**
+Multiple questions may affect the same sector. For XLU (utilities), there might be both a rate-cut question (bad for XLU if unlikely) and an infrastructure-spending question (good for XLU if likely). The model adds these up, clipping the final result to [−1.0, +1.0]. Tilts with absolute value below 0.05 snap to 0.0 (treated as noise).
+
+**Step 5 — Use judgment, not just mechanics.**
+The `judgments` field in the output is a scratchpad where the model is allowed to note cases where the mechanical rule would produce a wrong answer. For example: "Markets A and B are both about Fed rate cuts — they are nearly identical questions. I will only use market A (higher volume) and set market B's contribution to zero to avoid double-counting." This prevents correlated questions from amplifying the same signal artificially.
+
+#### What comes back
+
+A `PolymarketSignal` with six fields:
+- `judgments`: the model's scratchpad for overrides (e.g., double-counting warnings).
+- `implied_probs`: the current probabilities for all 13 markets (market_id → float). If the database has no data for a market (as happens on historical dates before Polymarket existed), the value is `None` and gets stripped before validation.
+- `sector_tilts`: **the main output** — a dict mapping each ETF ticker to a single number in [−1.0, +1.0], representing the net effect of all 13 markets on that sector's outlook.
+- `driving_events`: for each sector with a meaningful tilt (|tilt| ≥ 0.05), a human-readable explanation of which question drove the signal and why.
+- `time_horizon`: `"short"`, `"medium"`, or `"long"` — the model's read of how near-term the signals are.
+- `overall_confidence`: a single float in [0.0, 1.0] for the whole output. Reflects how much data was available and how consistent the markets' signals were.
+
+#### What gets written to the database
+
+10 rows in `signals`, one per sector. `agent_name = "events"`, `signal_value = sector_tilt`, `confidence = overall_confidence` (the same value for all 10 rows — Polymarket gives a portfolio-level confidence, not per-sector).
+
+#### Why the same overall_confidence for all 10 sectors
+
+Unlike the news agent (which reads different articles per sector and can say "XLK has 20 articles so I'm 0.75 confident, XLB has 2 articles so I'm 0.20 confident"), the Polymarket agent reads 13 global macroeconomic questions that affect all sectors simultaneously. The confidence in the data quality — how much volume, how many markets had live data — applies equally to all the outputs. So one number covers all 10 sectors.
+
+#### Real example (2026-06-13)
+
+All 13 markets had live data. Key probabilities:
+- Fed rate cut by July: **3%** (very unlikely → NO is almost certain)
+- US recession in 2026: **17%** (unlikely)
+- Oil above $90/barrel: **42%** (genuinely uncertain, slight lean NO)
+
+The model's key sector tilts:
+- **XLU = −0.18** — rate cuts are extremely unlikely. Utilities are rate-sensitive (they pay steady dividends that become less attractive when rates stay high), so this is bearish for XLU.
+- **XLRE = −0.15** — same logic as XLU. Real estate investment trusts borrow heavily and benefit from cheap money; no rate cuts means higher debt costs.
+- **XLE = +0.18** — no recession expected (17% probability), which is good for energy demand. Oil consumption doesn't fall when the economy stays healthy.
+- **XLF = +0.12** — no rate cuts is good for banks (higher rates = wider lending spreads = more profit).
+- Overall confidence: **0.58** — markets were high-volume and consistent, but the mixed signals across 13 questions prevented full confidence.
 
 ---
 
