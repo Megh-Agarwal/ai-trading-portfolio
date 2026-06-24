@@ -48,3 +48,6 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+
+# Config private
+config/gcp_key.json

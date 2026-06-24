@@ -1,0 +1,287 @@
+# Maps each constituent ticker to the company name(s) GDELT uses in its Organizations field.
+# GDELT indexes by extracted organization names, not ticker symbols.
+# Primary name first; alternates cover rebrandings, common abbreviations, and spelling variants.
+# Used by src/ingestion/gdelt.py to build UPPER() LIKE filters.
+
+# XLB — Materials
+LIN:
+  - "Linde"
+NEM:
+  - "Newmont"
+  - "Newmont Corporation"
+NUE:
+  - "Nucor"
+  - "Nucor Corporation"
+FCX:
+  - "Freeport-McMoRan"
+  - "Freeport McMoRan"
+VMC:
+  - "Vulcan Materials"
+CRH:
+  - "CRH"
+  - "CRH plc"
+APD:
+  - "Air Products"
+  - "Air Products and Chemicals"
+STLD:
+  - "Steel Dynamics"
+CTVA:
+  - "Corteva"
+  - "Corteva Agriscience"
+SHW:
+  - "Sherwin-Williams"
+  - "Sherwin Williams"
+
+# XLE — Energy
+XOM:
+  - "ExxonMobil"
+  - "Exxon Mobil"
+  - "Exxon"
+CVX:
+  - "Chevron"
+COP:
+  - "ConocoPhillips"
+  - "Conoco Phillips"
+SLB:
+  - "Schlumberger"
+  - "SLB"
+WMB:
+  - "Williams Companies"
+VLO:
+  - "Valero Energy"
+  - "Valero"
+MPC:
+  - "Marathon Petroleum"
+EOG:
+  - "EOG Resources"
+PSX:
+  - "Phillips 66"
+BKR:
+  - "Baker Hughes"
+
+# XLF — Financials
+BRK-B:
+  - "Berkshire Hathaway"
+JPM:
+  - "JPMorgan Chase"
+  - "JPMorgan"
+  - "J.P. Morgan"
+V:
+  - "Visa"
+  - "Visa Inc"
+MA:
+  - "Mastercard"
+BAC:
+  - "Bank of America"
+GS:
+  - "Goldman Sachs"
+MS:
+  - "Morgan Stanley"
+WFC:
+  - "Wells Fargo"
+C:
+  - "Citigroup"
+  - "Citibank"
+AXP:
+  - "American Express"
+
+# XLI — Industrials
+CAT:
+  - "Caterpillar"
+GE:
+  - "GE Aerospace"
+  - "General Electric"
+GEV:
+  - "GE Vernova"
+RTX:
+  - "RTX Corporation"
+  - "Raytheon Technologies"
+  - "Raytheon"
+BA:
+  - "Boeing"
+UNP:
+  - "Union Pacific"
+ETN:
+  - "Eaton Corporation"
+  - "Eaton"
+HON:
+  - "Honeywell"
+  - "Honeywell International"
+UBER:
+  - "Uber Technologies"
+  - "Uber"
+DE:
+  - "Deere"
+  - "John Deere"
+
+# XLK — Technology
+NVDA:
+  - "NVIDIA"
+  - "Nvidia"
+AAPL:
+  - "Apple"
+  - "Apple Inc"
+MSFT:
+  - "Microsoft"
+  - "Microsoft Corporation"
+MU:
+  - "Micron Technology"
+  - "Micron"
+AVGO:
+  - "Broadcom"
+AMD:
+  - "Advanced Micro Devices"
+  - "AMD"
+INTC:
+  - "Intel"
+  - "Intel Corporation"
+CSCO:
+  - "Cisco Systems"
+  - "Cisco"
+LRCX:
+  - "Lam Research"
+ORCL:
+  - "Oracle"
+  - "Oracle Corporation"
+
+# XLP — Consumer Staples
+WMT:
+  - "Walmart"
+  - "Wal-Mart"
+COST:
+  - "Costco"
+  - "Costco Wholesale"
+PG:
+  - "Procter & Gamble"
+  - "Procter and Gamble"
+KO:
+  - "Coca-Cola"
+  - "Coca Cola"
+PM:
+  - "Philip Morris International"
+  - "Philip Morris"
+MDLZ:
+  - "Mondelez International"
+  - "Mondelez"
+MO:
+  - "Altria"
+  - "Altria Group"
+CL:
+  - "Colgate-Palmolive"
+  - "Colgate Palmolive"
+  - "Colgate"
+PEP:
+  - "PepsiCo"
+  - "Pepsi"
+MNST:
+  - "Monster Beverage"
+  - "Monster Energy"
+
+# XLRE — Real Estate
+WELL:
+  - "Welltower"
+PLD:
+  - "Prologis"
+EQIX:
+  - "Equinix"
+AMT:
+  - "American Tower"
+SPG:
+  - "Simon Property Group"
+  - "Simon Property"
+DLR:
+  - "Digital Realty"
+  - "Digital Realty Trust"
+PSA:
+  - "Public Storage"
+VTR:
+  - "Ventas"
+CCI:
+  - "Crown Castle"
+  - "Crown Castle International"
+O:
+  - "Realty Income"
+  - "Realty Income Corporation"
+
+# XLU — Utilities
+NEE:
+  - "NextEra Energy"
+  - "NextEra"
+SO:
+  - "Southern Company"
+DUK:
+  - "Duke Energy"
+CEG:
+  - "Constellation Energy"
+AEP:
+  - "American Electric Power"
+SRE:
+  - "Sempra Energy"
+  - "Sempra"
+D:
+  - "Dominion Energy"
+  - "Dominion"
+VST:
+  - "Vistra"
+  - "Vistra Energy"
+ETR:
+  - "Entergy"
+XEL:
+  - "Xcel Energy"
+
+# XLV — Health Care
+LLY:
+  - "Eli Lilly"
+  - "Lilly"
+JNJ:
+  - "Johnson & Johnson"
+  - "Johnson and Johnson"
+ABBV:
+  - "AbbVie"
+UNH:
+  - "UnitedHealth Group"
+  - "UnitedHealth"
+MRK:
+  - "Merck"
+  - "Merck & Co"
+TMO:
+  - "Thermo Fisher Scientific"
+  - "Thermo Fisher"
+AMGN:
+  - "Amgen"
+GILD:
+  - "Gilead Sciences"
+  - "Gilead"
+ISRG:
+  - "Intuitive Surgical"
+PFE:
+  - "Pfizer"
+
+# XLY — Consumer Discretionary
+AMZN:
+  - "Amazon"
+  - "Amazon.com"
+TSLA:
+  - "Tesla"
+  - "Tesla Inc"
+HD:
+  - "Home Depot"
+  - "The Home Depot"
+TJX:
+  - "TJX Companies"
+MCD:
+  - "McDonald's"
+  - "McDonalds"
+BKNG:
+  - "Booking Holdings"
+  - "Booking.com"
+LOW:
+  - "Lowe's"
+  - "Lowes"
+SBUX:
+  - "Starbucks"
+MAR:
+  - "Marriott International"
+  - "Marriott"
+GM:
+  - "General Motors"
