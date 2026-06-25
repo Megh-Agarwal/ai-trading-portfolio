@@ -24,7 +24,7 @@ import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from db.models import PortfolioSnapshot, Trade
+from db.models import PORTFOLIO_LIVE, PortfolioSnapshot, Trade
 from execution.state import get_current_positions
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,12 @@ logger = logging.getLogger(__name__)
 _CASH = "CASH"
 
 
-def compute_period_return(start_date: str, end_date: str, db: Session) -> dict:
+def compute_period_return(
+    start_date: str,
+    end_date: str,
+    db: Session,
+    portfolio_id: str = PORTFOLIO_LIVE,
+) -> dict:
     """Compute the total portfolio return between two snapshot dates.
 
     Args:
@@ -50,10 +55,14 @@ def compute_period_return(start_date: str, end_date: str, db: Session) -> dict:
     end_obj = datetime.date.fromisoformat(end_date)
 
     snap_start = db.execute(
-        select(PortfolioSnapshot).where(PortfolioSnapshot.date == start_obj)
+        select(PortfolioSnapshot)
+        .where(PortfolioSnapshot.portfolio_id == portfolio_id)
+        .where(PortfolioSnapshot.date == start_obj)
     ).scalar_one_or_none()
     snap_end = db.execute(
-        select(PortfolioSnapshot).where(PortfolioSnapshot.date == end_obj)
+        select(PortfolioSnapshot)
+        .where(PortfolioSnapshot.portfolio_id == portfolio_id)
+        .where(PortfolioSnapshot.date == end_obj)
     ).scalar_one_or_none()
 
     if snap_start is None:
@@ -77,6 +86,7 @@ def compute_sector_contribution(
     end_date: str,
     db: Session,
     prices: pd.DataFrame,
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> dict[str, float]:
     """Compute per-sector return contributions over the period.
 
@@ -102,10 +112,14 @@ def compute_sector_contribution(
     end_obj = datetime.date.fromisoformat(end_date)
 
     snap_start = db.execute(
-        select(PortfolioSnapshot).where(PortfolioSnapshot.date == start_obj)
+        select(PortfolioSnapshot)
+        .where(PortfolioSnapshot.portfolio_id == portfolio_id)
+        .where(PortfolioSnapshot.date == start_obj)
     ).scalar_one_or_none()
     snap_end = db.execute(
-        select(PortfolioSnapshot).where(PortfolioSnapshot.date == end_obj)
+        select(PortfolioSnapshot)
+        .where(PortfolioSnapshot.portfolio_id == portfolio_id)
+        .where(PortfolioSnapshot.date == end_obj)
     ).scalar_one_or_none()
 
     if snap_start is None:
@@ -113,8 +127,8 @@ def compute_sector_contribution(
     if snap_end is None:
         raise ValueError(f"No portfolio_snapshot row for end_date={end_date}")
 
-    pos_start = get_current_positions(start_date, db)
-    pos_end = get_current_positions(end_date, db)
+    pos_start = get_current_positions(start_date, db, portfolio_id=portfolio_id)
+    pos_end = get_current_positions(end_date, db, portfolio_id=portfolio_id)
 
     all_tickers = (set(pos_start.keys()) | set(pos_end.keys())) - {_CASH}
     contributions: dict[str, float] = {}
@@ -154,7 +168,12 @@ def compute_sector_contribution(
     return contributions
 
 
-def compute_cost_drag(start_date: str, end_date: str, db: Session) -> dict:
+def compute_cost_drag(
+    start_date: str,
+    end_date: str,
+    db: Session,
+    portfolio_id: str = PORTFOLIO_LIVE,
+) -> dict:
     """Compute total transaction costs and express as portfolio basis points.
 
     Sums commission from all trades in [start_date, end_date] (inclusive).
@@ -175,6 +194,7 @@ def compute_cost_drag(start_date: str, end_date: str, db: Session) -> dict:
     total_cost_usd: float = (
         db.execute(
             select(func.sum(Trade.commission)).where(
+                Trade.portfolio_id == portfolio_id,
                 Trade.date >= start_obj,
                 Trade.date <= end_obj,
             )
@@ -183,10 +203,14 @@ def compute_cost_drag(start_date: str, end_date: str, db: Session) -> dict:
     )
 
     snap_start = db.execute(
-        select(PortfolioSnapshot).where(PortfolioSnapshot.date == start_obj)
+        select(PortfolioSnapshot)
+        .where(PortfolioSnapshot.portfolio_id == portfolio_id)
+        .where(PortfolioSnapshot.date == start_obj)
     ).scalar_one_or_none()
     snap_end = db.execute(
-        select(PortfolioSnapshot).where(PortfolioSnapshot.date == end_obj)
+        select(PortfolioSnapshot)
+        .where(PortfolioSnapshot.portfolio_id == portfolio_id)
+        .where(PortfolioSnapshot.date == end_obj)
     ).scalar_one_or_none()
 
     values = [s.total_value for s in (snap_start, snap_end) if s is not None]
