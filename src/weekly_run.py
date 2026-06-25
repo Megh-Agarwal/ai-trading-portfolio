@@ -190,6 +190,7 @@ def run_weekly(
     db_engine: Engine,
     force: bool = False,
     portfolio_id: str = PORTFOLIO_LIVE,
+    skip_ingest: bool = False,
 ) -> dict:
     """Run one full weekly rebalance cycle.
 
@@ -201,6 +202,8 @@ def run_weekly(
         portfolio_id: Portfolio namespace. All writes (signals, views, weights,
             trades, positions, snapshots, risk_events) are scoped to this ID.
             Defaults to "live" for backward compatibility.
+        skip_ingest: When True, skip _ingest_fresh_data (used by the backtest
+            engine which pre-loads all data before iterating weekly runs).
 
     Returns:
         Summary dict. On a skipped run: {"skipped": True, "reason": ..., "date": ...}.
@@ -229,7 +232,8 @@ def run_weekly(
     summary: dict = {"date": date_str, "mode": mode, "skipped": False, "portfolio_id": portfolio_id}
 
     # ── step 1: ingest ────────────────────────────────────────────────────
-    _ingest_fresh_data(date_obj, mode, db_engine)
+    if not skip_ingest:
+        _ingest_fresh_data(date_obj, mode, db_engine)
 
     # ── SPY buy-and-hold benchmark: handles all remaining steps internally ─
     if portfolio_id == PORTFOLIO_BACKTEST_SPY:
