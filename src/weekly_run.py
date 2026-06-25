@@ -27,7 +27,14 @@ from sqlalchemy.orm import Session
 
 from agents.pipeline import run_agent_pipeline
 from config import load_config
-from db.models import PORTFOLIO_LIVE, Position, Price, TargetWeight
+from db.models import (
+    PORTFOLIO_BACKTEST_EQUAL_WEIGHT,
+    PORTFOLIO_BACKTEST_NO_LLM,
+    PORTFOLIO_LIVE,
+    Position,
+    Price,
+    TargetWeight,
+)
 from execution.fill_simulator import apply_fills_to_state, simulate_all_fills
 from execution.orders import generate_orders, validate_orders_affordable
 from execution.state import (
@@ -36,7 +43,7 @@ from execution.state import (
     get_portfolio_value,
     write_portfolio_snapshot,
 )
-from optimizer.pipeline import run_optimization_pipeline
+from optimizer.pipeline import run_equal_weight_pipeline, run_optimization_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -223,14 +230,27 @@ def run_weekly(
     _ingest_fresh_data(date_obj, mode, db_engine)
 
     # ── step 2: agent pipeline ────────────────────────────────────────────
-    agent_result = run_agent_pipeline(date_obj, db_engine, mode=mode, portfolio_id=portfolio_id)
-    summary["llm_cost_usd"] = agent_result["total_cost_usd"]
-    logger.info("Agent pipeline complete  cost=$%.5f", agent_result["total_cost_usd"])
+    # Baseline portfolios (no-LLM, equal-weight) skip the agent pipeline entirely.
+    _baseline_ids = (PORTFOLIO_BACKTEST_NO_LLM, PORTFOLIO_BACKTEST_EQUAL_WEIGHT)
+    if portfolio_id not in _baseline_ids:
+        agent_result = run_agent_pipeline(date_obj, db_engine, mode=mode, portfolio_id=portfolio_id)
+        summary["llm_cost_usd"] = agent_result["total_cost_usd"]
+        logger.info("Agent pipeline complete  cost=$%.5f", agent_result["total_cost_usd"])
+    else:
+        summary["llm_cost_usd"] = 0.0
+        logger.info("Skipping agent pipeline for baseline portfolio=%s", portfolio_id)
 
     # ── step 3: optimization pipeline ─────────────────────────────────────
-    opt_result = run_optimization_pipeline(
-        date_str, db_engine, mode=mode, portfolio_id=portfolio_id
-    )
+    if portfolio_id == PORTFOLIO_BACKTEST_EQUAL_WEIGHT:
+        opt_result = run_equal_weight_pipeline(date_str, db_engine, portfolio_id=portfolio_id)
+    elif portfolio_id == PORTFOLIO_BACKTEST_NO_LLM:
+        opt_result = run_optimization_pipeline(
+            date_str, db_engine, mode=mode, portfolio_id=portfolio_id, force_zero_views=True
+        )
+    else:
+        opt_result = run_optimization_pipeline(
+            date_str, db_engine, mode=mode, portfolio_id=portfolio_id
+        )
     target_weights: dict[str, float] = opt_result["weights"]
     summary.update(
         {

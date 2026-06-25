@@ -20,7 +20,15 @@ from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from config import load_config
-from db.models import Base, PortfolioSnapshot, Position, TargetWeight, Trade
+from db.models import (
+    PORTFOLIO_BACKTEST_EQUAL_WEIGHT,
+    PORTFOLIO_BACKTEST_NO_LLM,
+    Base,
+    PortfolioSnapshot,
+    Position,
+    TargetWeight,
+    Trade,
+)
 from weekly_run import _already_executed, _fetch_prices_for_date, run_weekly
 
 # ---------------------------------------------------------------------------
@@ -87,7 +95,7 @@ def db_engine():
 def _make_optimizer_mock():
     """side_effect for run_optimization_pipeline: writes TargetWeight rows + returns dict."""
 
-    def _mock(date, db, mode="backtest", portfolio_id="live"):
+    def _mock(date, db, mode="backtest", portfolio_id="live", force_zero_views=False):
         date_obj = datetime.date.fromisoformat(date) if isinstance(date, str) else date
         with Session(db) as session:
             session.execute(
@@ -131,6 +139,40 @@ def _make_agent_mock():
             "views": {"q": [0.0] * _N, "omega_diag": [1.0] * _N},
             "total_cost_usd": 0.0,
             "total_latency_ms": 1.0,
+        }
+
+    return _mock
+
+
+def _make_equal_weight_mock():
+    """side_effect for run_equal_weight_pipeline: writes equal TargetWeight rows."""
+
+    def _mock(date, db, portfolio_id="live"):
+        date_obj = datetime.date.fromisoformat(date) if isinstance(date, str) else date
+        equal_w = 1.0 / _N
+        with Session(db) as session:
+            session.execute(
+                delete(TargetWeight)
+                .where(TargetWeight.portfolio_id == portfolio_id)
+                .where(TargetWeight.date == date_obj)
+            )
+            for t in _TICKERS:
+                session.add(
+                    TargetWeight(portfolio_id=portfolio_id, date=date_obj, sector=t, weight=equal_w)
+                )
+            session.commit()
+        return {
+            "date": str(date_obj),
+            "weights": {t: equal_w for t in _TICKERS},
+            "expected_return_annual": 0.0,
+            "expected_vol_annual": 0.0,
+            "turnover": 0.0,
+            "estimated_cost_usd": 0.0,
+            "risk_checks": [],
+            "any_risk_triggered": False,
+            "mode": "equal_weight",
+            "views_available": False,
+            "vol_constraint_status": "not_applicable",
         }
 
     return _mock
@@ -359,3 +401,137 @@ class TestFetchPricesForDate:
         prices = _fetch_prices_for_date(_DATE_OBJ, ["XLK"], engine)
         assert prices["XLK"] == pytest.approx(195.0)
         engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Baseline portfolio tests — Ticket 5.2
+# ---------------------------------------------------------------------------
+
+
+class TestNoLlmBaseline:
+    """backtest_no_llm: real optimizer with force_zero_views=True; no agent calls."""
+
+    def test_agent_pipeline_not_called(self, db_engine) -> None:
+        """No LLM agent calls are made for the no-LLM baseline portfolio."""
+        with patch("weekly_run.run_agent_pipeline") as mock_agent:
+            run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_NO_LLM)
+            mock_agent.assert_not_called()
+
+    def test_optimizer_called_with_force_zero_views(self, db_engine) -> None:
+        """run_optimization_pipeline receives force_zero_views=True."""
+        with patch(
+            "weekly_run.run_optimization_pipeline", side_effect=_make_optimizer_mock()
+        ) as mock_opt:
+            run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_NO_LLM)
+            _, kwargs = mock_opt.call_args
+            assert kwargs.get("force_zero_views") is True
+
+    def test_llm_cost_is_zero(self, db_engine) -> None:
+        result = run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_NO_LLM)
+        assert result["llm_cost_usd"] == pytest.approx(0.0)
+
+    def test_target_weights_written_to_db(self, db_engine) -> None:
+        """Optimizer writes TargetWeight rows under the no-LLM portfolio ID."""
+        run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_NO_LLM)
+        with Session(db_engine) as session:
+            count = session.execute(
+                select(func.count())
+                .select_from(TargetWeight)
+                .where(TargetWeight.portfolio_id == PORTFOLIO_BACKTEST_NO_LLM)
+                .where(TargetWeight.date == _DATE_OBJ)
+            ).scalar()
+        assert count == _N
+
+    def test_positions_written_to_correct_portfolio(self, db_engine) -> None:
+        run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_NO_LLM)
+        with Session(db_engine) as session:
+            count = session.execute(
+                select(func.count())
+                .select_from(Position)
+                .where(Position.portfolio_id == PORTFOLIO_BACKTEST_NO_LLM)
+                .where(Position.date == _DATE_OBJ)
+            ).scalar()
+        assert count > 0
+
+    def test_snapshot_written_to_correct_portfolio(self, db_engine) -> None:
+        run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_NO_LLM)
+        with Session(db_engine) as session:
+            count = session.execute(
+                select(func.count())
+                .select_from(PortfolioSnapshot)
+                .where(PortfolioSnapshot.portfolio_id == PORTFOLIO_BACKTEST_NO_LLM)
+                .where(PortfolioSnapshot.date == _DATE_OBJ)
+            ).scalar()
+        assert count == 1
+
+    def test_does_not_write_to_live_portfolio(self, db_engine) -> None:
+        run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_NO_LLM)
+        with Session(db_engine) as session:
+            count = session.execute(
+                select(func.count())
+                .select_from(Position)
+                .where(Position.portfolio_id == "live")
+                .where(Position.date == _DATE_OBJ)
+            ).scalar()
+        assert count == 0
+
+
+class TestEqualWeightBaseline:
+    """backtest_equal_weight: fixed 1/n weights; no agent or BL optimizer calls."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_equal_weight_pipeline(self):
+        with patch(
+            "weekly_run.run_equal_weight_pipeline", side_effect=_make_equal_weight_mock()
+        ):
+            yield
+
+    def test_agent_pipeline_not_called(self, db_engine) -> None:
+        with patch("weekly_run.run_agent_pipeline") as mock_agent:
+            run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_EQUAL_WEIGHT)
+            mock_agent.assert_not_called()
+
+    def test_optimizer_not_called(self, db_engine) -> None:
+        """run_optimization_pipeline is bypassed; equal_weight pipeline is used instead."""
+        with patch("weekly_run.run_optimization_pipeline") as mock_opt:
+            run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_EQUAL_WEIGHT)
+            mock_opt.assert_not_called()
+
+    def test_llm_cost_is_zero(self, db_engine) -> None:
+        pid = PORTFOLIO_BACKTEST_EQUAL_WEIGHT
+        result = run_weekly(_DATE, "backtest", db_engine, portfolio_id=pid)
+        assert result["llm_cost_usd"] == pytest.approx(0.0)
+
+    def test_weights_sum_to_one(self, db_engine) -> None:
+        pid = PORTFOLIO_BACKTEST_EQUAL_WEIGHT
+        result = run_weekly(_DATE, "backtest", db_engine, portfolio_id=pid)
+        assert sum(result["weights_after"].values()) == pytest.approx(1.0, abs=1e-6)
+
+    def test_each_weight_is_one_over_n(self, db_engine) -> None:
+        pid = PORTFOLIO_BACKTEST_EQUAL_WEIGHT
+        result = run_weekly(_DATE, "backtest", db_engine, portfolio_id=pid)
+        expected = 1.0 / _N
+        for w in result["weights_after"].values():
+            assert w == pytest.approx(expected, abs=1e-9)
+
+    def test_positions_written_to_correct_portfolio(self, db_engine) -> None:
+        run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_EQUAL_WEIGHT)
+        with Session(db_engine) as session:
+            count = session.execute(
+                select(func.count())
+                .select_from(Position)
+                .where(Position.portfolio_id == PORTFOLIO_BACKTEST_EQUAL_WEIGHT)
+                .where(Position.date == _DATE_OBJ)
+            ).scalar()
+        assert count > 0
+
+    def test_does_not_write_to_live_portfolio(self, db_engine) -> None:
+        run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_EQUAL_WEIGHT)
+        with Session(db_engine) as session:
+            count = session.execute(
+                select(func.count())
+                .select_from(Position)
+                .where(Position.portfolio_id == "live")
+                .where(Position.date == _DATE_OBJ)
+            ).scalar()
+        assert count == 0

@@ -48,6 +48,7 @@ def run_optimization_pipeline(
     db: Engine,
     mode: str = "backtest",
     portfolio_id: str = PORTFOLIO_LIVE,
+    force_zero_views: bool = False,
 ) -> dict:
     """Run the full optimization pipeline for one rebalance date.
 
@@ -62,6 +63,9 @@ def run_optimization_pipeline(
             metadata; does not affect the BL math (views are already in DB).
         portfolio_id: Portfolio namespace. All reads and writes are scoped to
             this ID so parallel backtests do not collide.
+        force_zero_views: When True, skip the views DB lookup and inject a zero
+            Q vector with a large uniform Omega. The BL posterior then equals
+            the equilibrium prior. Used by the no-LLM baseline portfolio.
 
     Returns:
         Summary dict with keys:
@@ -74,7 +78,7 @@ def run_optimization_pipeline(
         and then re-raised. Optimizer failures are never swallowed silently.
     """
     try:
-        return _run(date, db, mode, portfolio_id)
+        return _run(date, db, mode, portfolio_id, force_zero_views)
     except Exception:
         logger.critical(
             "Optimizer pipeline FAILED  date=%s  mode=%s  portfolio=%s\n%s",
@@ -86,20 +90,102 @@ def run_optimization_pipeline(
         raise
 
 
+def run_equal_weight_pipeline(
+    date: str | datetime.date,
+    db: Engine,
+    portfolio_id: str = PORTFOLIO_LIVE,
+) -> dict:
+    """Write equal target weights (1/n per sector) and return a summary dict.
+
+    Bypasses BL and CVXPY entirely — every sector gets exactly 1/n weight each
+    week. Turnover is computed from the previous week's target weights so cost
+    accounting remains honest. Used by the equal-weight baseline portfolio.
+
+    Args:
+        date: Rebalance date. ISO string or date object.
+        db: SQLAlchemy Engine connected to state.db.
+        portfolio_id: Portfolio namespace. Writes are scoped to this ID.
+
+    Returns:
+        Summary dict with the same keys as run_optimization_pipeline so
+        weekly_run can treat both pipelines identically.
+    """
+    try:
+        rebalance_date = datetime.date.fromisoformat(date) if isinstance(date, str) else date
+        tickers: list[str] = load_config("universe").ticker_list
+        n = len(tickers)
+        equal_w = 1.0 / n
+        weights_arr = np.full(n, equal_w)
+
+        prev_weights = _load_prev_weights(rebalance_date, tickers, n, db, portfolio_id)
+        turnover = compute_turnover(prev_weights, weights_arr)
+
+        _write_target_weights(rebalance_date, tickers, weights_arr, db, portfolio_id)
+
+        logger.info(
+            "run_equal_weight_pipeline  date=%s  portfolio=%s  n=%d  turnover=%.4f",
+            rebalance_date,
+            portfolio_id,
+            n,
+            turnover,
+        )
+
+        return {
+            "date": str(rebalance_date),
+            "weights": {t: equal_w for t in tickers},
+            "expected_return_annual": 0.0,
+            "expected_vol_annual": 0.0,
+            "turnover": turnover,
+            "estimated_cost_usd": 0.0,
+            "risk_checks": [],
+            "any_risk_triggered": False,
+            "mode": "equal_weight",
+            "views_available": False,
+            "vol_constraint_status": "not_applicable",
+        }
+    except Exception:
+        logger.critical(
+            "Equal-weight pipeline FAILED  date=%s  portfolio=%s\n%s",
+            date,
+            portfolio_id,
+            traceback.format_exc(),
+        )
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Private implementation
 # ---------------------------------------------------------------------------
 
 
-def _run(date: str | datetime.date, db: Engine, mode: str, portfolio_id: str) -> dict:
+def _run(
+    date: str | datetime.date,
+    db: Engine,
+    mode: str,
+    portfolio_id: str,
+    force_zero_views: bool = False,
+) -> dict:
     rebalance_date = datetime.date.fromisoformat(date) if isinstance(date, str) else date
 
     cfg = load_config("optimizer")
     tickers: list[str] = load_config("universe").ticker_list
     n = len(tickers)
 
-    # Step 1 — load views (Q, Omega) from DB; fallback to zero-view equilibrium
-    views_available, Q, omega = _load_views(rebalance_date, tickers, cfg, db, portfolio_id)
+    # Step 1 — load views (Q, Omega) from DB; fallback to zero-view equilibrium.
+    # force_zero_views bypasses the DB entirely: Q=0, Omega=large → posterior ≈ prior.
+    if force_zero_views:
+        omega_base: float = cfg.aggregator.omega_base
+        large_uncertainty = omega_base * _WEEKS_PER_YEAR / _MIN_CONVICTION
+        views_available = False
+        Q = np.zeros(n, dtype=float)
+        omega = np.diag([large_uncertainty] * n)
+        logger.info(
+            "force_zero_views=True: zero Q and large Omega  date=%s  portfolio=%s",
+            rebalance_date,
+            portfolio_id,
+        )
+    else:
+        views_available, Q, omega = _load_views(rebalance_date, tickers, cfg, db, portfolio_id)
 
     # Step 2 — load previous week's target weights; equal weights on first run
     prev_weights = _load_prev_weights(rebalance_date, tickers, n, db, portfolio_id)

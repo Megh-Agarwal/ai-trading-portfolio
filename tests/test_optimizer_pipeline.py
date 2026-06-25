@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from config import OptimizerConfig, UniverseConfig
 from db.models import Base, PortfolioSnapshot, TargetWeight, View
-from optimizer.pipeline import run_optimization_pipeline
+from optimizer.pipeline import run_equal_weight_pipeline, run_optimization_pipeline
 from optimizer.risk_checks import RiskCheckResult
 
 # ---------------------------------------------------------------------------
@@ -664,3 +664,152 @@ class TestIntegration:
         assert not np.allclose(second_call_prev, np.ones(_N) / _N, atol=1e-2) or np.allclose(
             first_call_prev, np.ones(_N) / _N, atol=1e-2
         )
+
+
+# ---------------------------------------------------------------------------
+# TestForceZeroViews — Ticket 5.2
+# ---------------------------------------------------------------------------
+
+
+class TestForceZeroViews:
+    def test_weights_sum_to_one(self, tmp_path, monkeypatch):
+        """force_zero_views=True still produces a valid weight vector."""
+        engine = _make_engine(tmp_path)
+        _patch_pipeline(monkeypatch)
+        _seed_views(engine, _DATE)  # views present but should be ignored
+
+        result = run_optimization_pipeline(_DATE, engine, force_zero_views=True)
+
+        assert sum(result["weights"].values()) == pytest.approx(1.0, abs=1e-6)
+
+    def test_views_available_false(self, tmp_path, monkeypatch):
+        """force_zero_views reports views_available=False even when DB views exist."""
+        engine = _make_engine(tmp_path)
+        _patch_pipeline(monkeypatch)
+        _seed_views(engine, _DATE)
+
+        result = run_optimization_pipeline(_DATE, engine, force_zero_views=True)
+
+        assert result["views_available"] is False
+
+    def test_views_in_db_are_ignored(self, tmp_path, monkeypatch):
+        """With force_zero_views, strong views have no effect on weights."""
+        tmp_with = tmp_path / "with_views"
+        tmp_with.mkdir()
+        tmp_without = tmp_path / "without_views"
+        tmp_without.mkdir()
+        engine_with = _make_engine(tmp_with)
+        engine_without = _make_engine(tmp_without)
+        _patch_pipeline(monkeypatch)
+        # Seed very strong bullish views — should be ignored under force_zero_views
+        _seed_views(engine_with, _DATE, q_values=[0.20, 0.15, 0.10], conf_values=[0.9, 0.9, 0.9])
+
+        result_with = run_optimization_pipeline(_DATE, engine_with, force_zero_views=True)
+        result_without = run_optimization_pipeline(_DATE, engine_without, force_zero_views=True)
+
+        for ticker in _TICKERS:
+            assert result_with["weights"][ticker] == pytest.approx(
+                result_without["weights"][ticker], abs=1e-9
+            )
+
+    def test_all_weights_non_negative(self, tmp_path, monkeypatch):
+        engine = _make_engine(tmp_path)
+        _patch_pipeline(monkeypatch)
+
+        result = run_optimization_pipeline(_DATE, engine, force_zero_views=True)
+
+        assert all(w >= -1e-9 for w in result["weights"].values())
+
+    def test_weights_written_to_db(self, tmp_path, monkeypatch):
+        engine = _make_engine(tmp_path)
+        _patch_pipeline(monkeypatch)
+
+        run_optimization_pipeline(_DATE, engine, force_zero_views=True)
+
+        with Session(engine) as session:
+            count = session.execute(
+                select(func.count()).select_from(TargetWeight).where(TargetWeight.date == _DATE)
+            ).scalar()
+        assert count == _N
+
+
+# ---------------------------------------------------------------------------
+# TestEqualWeightPipeline — Ticket 5.2
+# ---------------------------------------------------------------------------
+
+
+class TestEqualWeightPipeline:
+    def test_each_weight_is_one_over_n(self, tmp_path, monkeypatch):
+        engine = _make_engine(tmp_path)
+        _patch_pipeline(monkeypatch)
+
+        result = run_equal_weight_pipeline(_DATE, engine)
+
+        expected = 1.0 / _N
+        for ticker in _TICKERS:
+            assert result["weights"][ticker] == pytest.approx(expected, abs=1e-9)
+
+    def test_weights_sum_to_one(self, tmp_path, monkeypatch):
+        engine = _make_engine(tmp_path)
+        _patch_pipeline(monkeypatch)
+
+        result = run_equal_weight_pipeline(_DATE, engine)
+
+        assert sum(result["weights"].values()) == pytest.approx(1.0, abs=1e-6)
+
+    def test_weights_written_to_db(self, tmp_path, monkeypatch):
+        engine = _make_engine(tmp_path)
+        _patch_pipeline(monkeypatch)
+
+        run_equal_weight_pipeline(_DATE, engine)
+
+        with Session(engine) as session:
+            rows = (
+                session.execute(select(TargetWeight).where(TargetWeight.date == _DATE))
+                .scalars()
+                .all()
+            )
+        assert len(rows) == _N
+        for row in rows:
+            assert row.weight == pytest.approx(1.0 / _N, abs=1e-9)
+
+    def test_date_string_accepted(self, tmp_path, monkeypatch):
+        engine = _make_engine(tmp_path)
+        _patch_pipeline(monkeypatch)
+
+        result = run_equal_weight_pipeline(str(_DATE), engine)
+
+        assert result["date"] == str(_DATE)
+
+    def test_required_keys_in_result(self, tmp_path, monkeypatch):
+        engine = _make_engine(tmp_path)
+        _patch_pipeline(monkeypatch)
+
+        result = run_equal_weight_pipeline(_DATE, engine)
+
+        required = {
+            "date", "weights", "estimated_cost_usd", "any_risk_triggered",
+            "risk_checks", "vol_constraint_status", "turnover",
+        }
+        assert required <= set(result.keys())
+
+    def test_idempotent_second_call_no_duplicate_rows(self, tmp_path, monkeypatch):
+        engine = _make_engine(tmp_path)
+        _patch_pipeline(monkeypatch)
+
+        run_equal_weight_pipeline(_DATE, engine)
+        run_equal_weight_pipeline(_DATE, engine)
+
+        with Session(engine) as session:
+            count = session.execute(
+                select(func.count()).select_from(TargetWeight).where(TargetWeight.date == _DATE)
+            ).scalar()
+        assert count == _N
+
+    def test_all_weights_non_negative(self, tmp_path, monkeypatch):
+        engine = _make_engine(tmp_path)
+        _patch_pipeline(monkeypatch)
+
+        result = run_equal_weight_pipeline(_DATE, engine)
+
+        assert all(w >= 0.0 for w in result["weights"].values())
