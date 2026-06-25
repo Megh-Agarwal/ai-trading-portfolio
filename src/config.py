@@ -112,9 +112,7 @@ class OptimizerConfig(BaseModel):
     def check_market_cap_weights(self) -> OptimizerConfig:
         for ticker, w in self.market_cap_weights.items():
             if w <= 0:
-                raise ValueError(
-                    f"market_cap_weights[{ticker!r}] = {w} must be positive"
-                )
+                raise ValueError(f"market_cap_weights[{ticker!r}] = {w} must be positive")
         return self
 
 

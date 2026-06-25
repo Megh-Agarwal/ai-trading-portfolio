@@ -188,9 +188,7 @@ def test_load_curated_markets_real_yaml():
 
 
 def test_fetch_current_state_normalizes_snapshot(mock_requests):
-    curated = [
-        {"market_id": "mkt-1", "question": "Will X?", "category": "economy"}
-    ]
+    curated = [{"market_id": "mkt-1", "question": "Will X?", "category": "economy"}]
     mock_requests.return_value = _mock_response(_market_dict("mkt-1", yes_price="0.72"))
     snapshots = fetch_current_state(curated)
     assert len(snapshots) == 1
@@ -276,8 +274,12 @@ def test_write_polymarket_inserts_rows(engine):
 def test_write_polymarket_upserts_on_conflict(engine):
     ts = datetime.datetime(2024, 1, 15, 12, 0)
     snap = {
-        "market_id": "m1", "timestamp": ts, "question": "Q",
-        "implied_prob": 0.50, "volume": 10000.0, "category": "economy",
+        "market_id": "m1",
+        "timestamp": ts,
+        "question": "Q",
+        "implied_prob": 0.50,
+        "volume": 10000.0,
+        "category": "economy",
         "end_date": None,
     }
     write_polymarket([snap], engine)
@@ -294,8 +296,12 @@ def test_write_polymarket_empty_list_returns_zero(engine):
 
 def test_write_polymarket_two_timestamps_same_market(engine):
     snap_base = {
-        "market_id": "m1", "question": "Q", "implied_prob": 0.60,
-        "volume": 5000.0, "category": "economy", "end_date": None,
+        "market_id": "m1",
+        "question": "Q",
+        "implied_prob": 0.60,
+        "volume": 5000.0,
+        "category": "economy",
+        "end_date": None,
     }
     s1 = {**snap_base, "timestamp": datetime.datetime(2024, 1, 10, 12)}
     s2 = {**snap_base, "timestamp": datetime.datetime(2024, 1, 11, 12), "implied_prob": 0.65}

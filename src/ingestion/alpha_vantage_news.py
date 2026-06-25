@@ -92,11 +92,7 @@ def fetch_av_news(
         source = item.get("source")
 
         ticker_sentiments = item.get("ticker_sentiment", [])
-        matched = [
-            s["ticker"]
-            for s in ticker_sentiments
-            if s.get("ticker") in ticker_set
-        ]
+        matched = [s["ticker"] for s in ticker_sentiments if s.get("ticker") in ticker_set]
         if not matched:
             if ticker_sentiments:
                 # Article has ticker_sentiment entries but none are in our query set — skip.

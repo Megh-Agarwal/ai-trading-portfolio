@@ -62,18 +62,43 @@ def populated_engine(engine):
     """Engine with a few pre-inserted news rows."""
     ts = datetime.datetime(2024, 1, 15, 10, 0)
     with Session(engine) as session:
-        session.add_all([
-            NewsRaw(ticker="AAPL", sector="XLK", timestamp=ts, source="Reuters",
-                    title="Apple news 1", url="https://example.com/1"),
-            NewsRaw(ticker="AAPL", sector="XLK", timestamp=ts, source="Reuters",
-                    title="Apple news 2", url="https://example.com/2"),
-            NewsRaw(ticker="MSFT", sector="XLK", timestamp=ts, source="Bloomberg",
-                    title="Microsoft news", url="https://example.com/3"),
-            # Outside the week window
-            NewsRaw(ticker="AAPL", sector="XLK",
-                    timestamp=datetime.datetime(2024, 2, 5), source="Reuters",
-                    title="Feb news", url="https://example.com/4"),
-        ])
+        session.add_all(
+            [
+                NewsRaw(
+                    ticker="AAPL",
+                    sector="XLK",
+                    timestamp=ts,
+                    source="Reuters",
+                    title="Apple news 1",
+                    url="https://example.com/1",
+                ),
+                NewsRaw(
+                    ticker="AAPL",
+                    sector="XLK",
+                    timestamp=ts,
+                    source="Reuters",
+                    title="Apple news 2",
+                    url="https://example.com/2",
+                ),
+                NewsRaw(
+                    ticker="MSFT",
+                    sector="XLK",
+                    timestamp=ts,
+                    source="Bloomberg",
+                    title="Microsoft news",
+                    url="https://example.com/3",
+                ),
+                # Outside the week window
+                NewsRaw(
+                    ticker="AAPL",
+                    sector="XLK",
+                    timestamp=datetime.datetime(2024, 2, 5),
+                    source="Reuters",
+                    title="Feb news",
+                    url="https://example.com/4",
+                ),
+            ]
+        )
         session.commit()
     return engine
 
@@ -128,10 +153,22 @@ def test_fetch_company_news_no_api_key_raises(monkeypatch):
 
 def test_write_news_inserts_articles(mock_finnhub, engine):
     articles = [
-        {"ticker": "AAPL", "timestamp": datetime.datetime(2024, 1, 10),
-         "source": "Reuters", "title": "T1", "summary": "S1", "url": "https://u1.com"},
-        {"ticker": "AAPL", "timestamp": datetime.datetime(2024, 1, 11),
-         "source": "Reuters", "title": "T2", "summary": "S2", "url": "https://u2.com"},
+        {
+            "ticker": "AAPL",
+            "timestamp": datetime.datetime(2024, 1, 10),
+            "source": "Reuters",
+            "title": "T1",
+            "summary": "S1",
+            "url": "https://u1.com",
+        },
+        {
+            "ticker": "AAPL",
+            "timestamp": datetime.datetime(2024, 1, 11),
+            "source": "Reuters",
+            "title": "T2",
+            "summary": "S2",
+            "url": "https://u2.com",
+        },
     ]
     n = write_news(articles, sector=SECTOR, engine=engine)
     assert n == 2
@@ -141,8 +178,14 @@ def test_write_news_inserts_articles(mock_finnhub, engine):
 
 
 def test_write_news_deduplicates_by_url(mock_finnhub, engine):
-    article = {"ticker": "AAPL", "timestamp": datetime.datetime(2024, 1, 10),
-               "source": "Reuters", "title": "T1", "summary": "S", "url": "https://u1.com"}
+    article = {
+        "ticker": "AAPL",
+        "timestamp": datetime.datetime(2024, 1, 10),
+        "source": "Reuters",
+        "title": "T1",
+        "summary": "S",
+        "url": "https://u1.com",
+    }
     write_news([article], sector=SECTOR, engine=engine)
     n = write_news([article], sector=SECTOR, engine=engine)  # second write
     assert n == 0
@@ -152,8 +195,16 @@ def test_write_news_deduplicates_by_url(mock_finnhub, engine):
 
 
 def test_write_news_tags_sector(engine):
-    articles = [{"ticker": "AAPL", "timestamp": datetime.datetime(2024, 1, 10),
-                 "source": "Reuters", "title": "T", "summary": "S", "url": "https://u.com"}]
+    articles = [
+        {
+            "ticker": "AAPL",
+            "timestamp": datetime.datetime(2024, 1, 10),
+            "source": "Reuters",
+            "title": "T",
+            "summary": "S",
+            "url": "https://u.com",
+        }
+    ]
     write_news(articles, sector="XLK", engine=engine)
     with Session(engine) as session:
         row = session.execute(select(NewsRaw)).scalar_one()
@@ -171,43 +222,60 @@ def test_write_news_empty_list_returns_zero(engine):
 
 def test_aggregate_returns_expected_keys(populated_engine):
     holdings = {"XLK": ["AAPL", "MSFT"]}
-    result = aggregate_to_sector_week("XLK", datetime.date(2024, 1, 8),
-                                      populated_engine, holdings=holdings)
+    result = aggregate_to_sector_week(
+        "XLK", datetime.date(2024, 1, 8), populated_engine, holdings=holdings
+    )
     assert set(result.keys()) >= {
-        "etf", "week_start", "week_end", "article_count",
-        "unique_url_count", "tickers_covered", "articles",
+        "etf",
+        "week_start",
+        "week_end",
+        "article_count",
+        "unique_url_count",
+        "tickers_covered",
+        "articles",
     }
 
 
 def test_aggregate_filters_to_week(populated_engine):
     holdings = {"XLK": ["AAPL", "MSFT"]}
     # Articles are timestamped Jan 15; week_start Jan 15 covers Jan 15–21
-    result = aggregate_to_sector_week("XLK", datetime.date(2024, 1, 15),
-                                      populated_engine, holdings=holdings)
+    result = aggregate_to_sector_week(
+        "XLK", datetime.date(2024, 1, 15), populated_engine, holdings=holdings
+    )
     assert result["article_count"] == 3
 
 
 def test_aggregate_deduplicates_by_url(engine):
     ts = datetime.datetime(2024, 1, 10)
     with Session(engine) as session:
-        session.add_all([
-            NewsRaw(ticker="AAPL", sector="XLK", timestamp=ts,
-                    title="Same story", url="https://dup.com"),
-            NewsRaw(ticker="MSFT", sector="XLK", timestamp=ts,
-                    title="Same story", url="https://dup.com"),  # same URL different ticker
-        ])
+        session.add_all(
+            [
+                NewsRaw(
+                    ticker="AAPL",
+                    sector="XLK",
+                    timestamp=ts,
+                    title="Same story",
+                    url="https://dup.com",
+                ),
+                NewsRaw(
+                    ticker="MSFT",
+                    sector="XLK",
+                    timestamp=ts,
+                    title="Same story",
+                    url="https://dup.com",
+                ),  # same URL different ticker
+            ]
+        )
         session.commit()
     holdings = {"XLK": ["AAPL", "MSFT"]}
-    result = aggregate_to_sector_week("XLK", datetime.date(2024, 1, 8),
-                                      engine, holdings=holdings)
+    result = aggregate_to_sector_week("XLK", datetime.date(2024, 1, 8), engine, holdings=holdings)
     assert result["unique_url_count"] == 1
     assert result["article_count"] == 1
 
 
 def test_aggregate_empty_when_no_news(engine):
     holdings = {"XLK": ["AAPL"]}
-    result = aggregate_to_sector_week("XLK", datetime.date(2024, 1, 1),
-                                      engine, holdings=holdings)
+    result = aggregate_to_sector_week("XLK", datetime.date(2024, 1, 1), engine, holdings=holdings)
     assert result["article_count"] == 0
     assert result["articles"] == []
 
@@ -220,11 +288,17 @@ def test_aggregate_empty_when_no_news(engine):
 def test_validate_historical_depth(monkeypatch, mock_finnhub):
     # Simulate 13 months of news
     import time as time_mod
+
     base_ts = int(time_mod.time()) - (13 * 31 * 86400)
     mock_finnhub.company_news.return_value = [
         {"datetime": base_ts, "headline": "old", "source": "x", "url": "u", "summary": ""},
-        {"datetime": int(time_mod.time()) - 86400, "headline": "recent", "source": "x",
-         "url": "u2", "summary": ""},
+        {
+            "datetime": int(time_mod.time()) - 86400,
+            "headline": "recent",
+            "source": "x",
+            "url": "u2",
+            "summary": "",
+        },
     ]
     depth = validate_historical_depth(ticker="AAPL", api_key="test")
     assert depth >= 12

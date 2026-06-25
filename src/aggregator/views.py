@@ -3,18 +3,18 @@
 All tunable parameters (max_excess_return_annual, omega_base, regime_scale_intercept,
 regime_scale_slope, agent weights) are read from config/optimizer.yaml (ADR-011, ADR-012).
 """
+
 from __future__ import annotations
 
 import datetime
 import logging
 
 import numpy as np
-from sqlalchemy import delete, select
-from sqlalchemy import Engine
+from sqlalchemy import Engine, delete, select
 from sqlalchemy.orm import Session
 
 from config import load_config
-from db.models import Signal, View
+from db.models import PORTFOLIO_LIVE, Signal, View
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +36,20 @@ _MACRO_REGIME_TARGET = "macro_regime"
 # ------------------------------------------------------------------
 
 
-def _fetch_signals(date: datetime.date, db: Engine) -> dict[str, list[dict]]:
-    """Return all signal rows for `date`, grouped by agent_name."""
+def _fetch_signals(
+    date: datetime.date,
+    db: Engine,
+    portfolio_id: str = PORTFOLIO_LIVE,
+) -> dict[str, list[dict]]:
+    """Return signal rows for `date` and `portfolio_id`, grouped by agent_name."""
     with Session(db) as session:
-        rows = session.execute(select(Signal).where(Signal.date == date)).scalars().all()
+        rows = (
+            session.execute(
+                select(Signal).where(Signal.portfolio_id == portfolio_id).where(Signal.date == date)
+            )
+            .scalars()
+            .all()
+        )
     grouped: dict[str, list[dict]] = {}
     for row in rows:
         grouped.setdefault(row.agent_name, []).append(
@@ -70,6 +80,7 @@ def build_views(
     db: Engine,
     mode: str = "live",
     weights: dict[str, float] | None = None,
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Merge agent signals into Black-Litterman views for `date`.
 
@@ -83,6 +94,8 @@ def build_views(
               polymarket_raw has no historical data (ADR-012).
         weights: Override agent weight dict with keys "news", "macro", "polymarket".
                  Must sum to ≤ 1.0. Overrides mode-based config weights.
+        portfolio_id: Portfolio namespace. Reads signals and writes views scoped to
+                      this ID; different portfolios do not collide on the same date.
 
     Returns:
         Q: np.ndarray of shape (N,) — annualised expected excess returns per sector.
@@ -106,17 +119,17 @@ def build_views(
     weight_sum = sum(weights.values())
     if weight_sum > 1.0 + 1e-6:
         raise ValueError(
-            f"Agent weights must sum to ≤ 1.0, got {weight_sum:.4f}. "
-            f"Weights: {weights}"
+            f"Agent weights must sum to ≤ 1.0, got {weight_sum:.4f}. Weights: {weights}"
         )
 
     sectors = [t.ticker for t in load_config("universe").tickers]
     n = len(sectors)
 
-    signals_by_agent = _fetch_signals(date, db)
+    signals_by_agent = _fetch_signals(date, db, portfolio_id=portfolio_id)
     if not signals_by_agent:
         raise ValueError(
-            f"No signal rows found for date={date}. Run all three agents first."
+            f"No signal rows found for date={date} portfolio={portfolio_id}. "
+            "Run all three agents first."
         )
 
     # ----------------------------------------------------------------
@@ -171,6 +184,7 @@ def build_views(
 
         view_rows.append(
             View(
+                portfolio_id=portfolio_id,
                 date=date,
                 sector=sector,
                 expected_return=q,
@@ -182,10 +196,12 @@ def build_views(
     omega_arr = np.diag(omega_diag)
 
     # ----------------------------------------------------------------
-    # Write to DB (idempotent: delete-before-insert)
+    # Write to DB (idempotent: delete-before-insert scoped to portfolio_id)
     # ----------------------------------------------------------------
     with Session(db) as session:
-        session.execute(delete(View).where(View.date == date))
+        session.execute(
+            delete(View).where(View.portfolio_id == portfolio_id).where(View.date == date)
+        )
         session.add_all(view_rows)
         session.commit()
 

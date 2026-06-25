@@ -1,4 +1,5 @@
 """Abstract base class for all LLM trading agents."""
+
 from __future__ import annotations
 
 import datetime
@@ -13,7 +14,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from cache import cached_call as _default_cached_call
-from db.models import AgentCall, Signal
+from db.models import PORTFOLIO_LIVE, AgentCall, Signal
 from exceptions import TruncationError
 
 logger = logging.getLogger(__name__)
@@ -98,10 +99,16 @@ class BaseAgent(ABC):
         validated: dict,
         call_id: int | None,
         db: Engine,
+        portfolio_id: str = PORTFOLIO_LIVE,
     ) -> None:
         """Write validated signal rows to the signals table."""
 
-    def run(self, date: datetime.date, db: Engine) -> dict:
+    def run(
+        self,
+        date: datetime.date,
+        db: Engine,
+        portfolio_id: str = PORTFOLIO_LIVE,
+    ) -> dict:
         """Full pipeline: prepare_input → cached LLM tool call → validate → write signals."""
         input_data = self.prepare_input(date, db)
 
@@ -144,7 +151,7 @@ class BaseAgent(ABC):
 
         validated = self.validate_output(response)
         call_id = self._last_call_id(db)
-        self._write_signals(date, validated, call_id, db)
+        self._write_signals(date, validated, call_id, db, portfolio_id)
         return validated
 
     # ------------------------------------------------------------------

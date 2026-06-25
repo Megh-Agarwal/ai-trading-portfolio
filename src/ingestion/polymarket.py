@@ -205,6 +205,7 @@ def _extract_yes_prob(raw: dict) -> float:
     if isinstance(outcome_prices, str):
         try:
             import json as _json
+
             outcome_prices = _json.loads(outcome_prices)
         except (ValueError, TypeError):
             outcome_prices = None

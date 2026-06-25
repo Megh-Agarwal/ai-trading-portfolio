@@ -148,14 +148,19 @@ def _check_quality(df: pd.DataFrame) -> None:
         if "close" in grp.columns:
             bad = grp[grp["close"].notna() & (grp["close"] <= 0)]
             if not bad.empty:
-                logger.warning("QUALITY [%s]: %d zero/negative close prices on %s",
-                               ticker, len(bad), bad["date"].tolist())
+                logger.warning(
+                    "QUALITY [%s]: %d zero/negative close prices on %s",
+                    ticker,
+                    len(bad),
+                    bad["date"].tolist(),
+                )
 
         if "adj_close" in grp.columns:
             bad_adj = grp[grp["adj_close"].notna() & (grp["adj_close"] <= 0)]
             if not bad_adj.empty:
-                logger.warning("QUALITY [%s]: %d zero/negative adj_close values",
-                               ticker, len(bad_adj))
+                logger.warning(
+                    "QUALITY [%s]: %d zero/negative adj_close values", ticker, len(bad_adj)
+                )
 
             valid = grp[grp["close"].notna() & grp["adj_close"].notna() & (grp["adj_close"] > 0)]
             if not valid.empty:
@@ -164,5 +169,8 @@ def _check_quality(df: pd.DataFrame) -> None:
                 if not suspicious.empty:
                     logger.warning(
                         "QUALITY [%s]: %d rows with suspicious close/adj_close ratio (%.2f–%.2f)",
-                        ticker, len(suspicious), ratio.min(), ratio.max(),
+                        ticker,
+                        len(suspicious),
+                        ratio.min(),
+                        ratio.max(),
                     )

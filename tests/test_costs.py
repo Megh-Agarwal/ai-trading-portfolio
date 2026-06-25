@@ -1,4 +1,5 @@
 """Tests for src/execution/costs.py — Ticket 3.4."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -9,7 +10,6 @@ from execution.costs import (
     estimate_portfolio_rebalance_cost,
     estimate_trade_cost,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper: minimal TransactionCostsConfig
@@ -22,6 +22,7 @@ def _make_config(
     min_trade_threshold: float = 0.001,
 ):
     from config import TransactionCostsConfig
+
     return TransactionCostsConfig(
         spread_bps=spread_bps,
         slippage_bps=slippage_bps,
@@ -45,14 +46,14 @@ class TestMandatoryAcceptanceCriteria:
         """Weight change well below min_trade_threshold → zero cost."""
         cfg = _make_config(min_trade_threshold=0.001)
         old = np.array([0.100, 0.900])
-        new = np.array([0.1005, 0.8995])   # |Δw| = 0.0005 < threshold=0.001
+        new = np.array([0.1005, 0.8995])  # |Δw| = 0.0005 < threshold=0.001
         cost = estimate_portfolio_rebalance_cost(old, new, 1_000_000.0, cfg)
         assert cost == pytest.approx(0.0)
 
     def test_full_rebalance_cost_sums_correctly(self) -> None:
         """Equal → concentrated rebalance: cost = sum of per-position costs."""
         n = 10
-        old = np.ones(n) / n                              # 10% each
+        old = np.ones(n) / n  # 10% each
         new = np.array([0.25, 0.25, 0.25, 0.25] + [0.0] * 6)
         portfolio_value = 1_000_000.0
         cfg = _make_config()
@@ -85,8 +86,9 @@ class TestEstimateTradeCost:
     def test_ticker_does_not_affect_cost_in_v1(self) -> None:
         """All tickers use the same bps in v1."""
         cfg = _make_config()
-        costs = [estimate_trade_cost(t, 100_000.0, cfg)
-                 for t in ["XLK", "XLF", "XLV", "XLU", "XLRE"]]
+        costs = [
+            estimate_trade_cost(t, 100_000.0, cfg) for t in ["XLK", "XLF", "XLV", "XLU", "XLRE"]
+        ]
         assert all(c == pytest.approx(30.0) for c in costs)
 
     def test_custom_bps_changes_cost(self) -> None:
@@ -108,7 +110,7 @@ class TestEstimatePortfolioRebalanceCost:
     def test_above_threshold_incurs_cost(self) -> None:
         cfg = _make_config(min_trade_threshold=0.001)
         old = np.array([0.10, 0.90])
-        new = np.array([0.102, 0.898])   # |Δw| = 0.002 > threshold
+        new = np.array([0.102, 0.898])  # |Δw| = 0.002 > threshold
         cost = estimate_portfolio_rebalance_cost(old, new, 1_000_000.0, cfg)
         # Both positions above threshold
         expected = 2 * 0.002 * 1_000_000.0 * 3.0 / 10_000.0
@@ -161,6 +163,7 @@ class TestComputeCostDragBps:
 class TestTransactionCostsConfig:
     def test_config_loads_transaction_costs_stanza(self) -> None:
         from config import load_config
+
         cfg = load_config("optimizer")
         tc = cfg.transaction_costs
         assert tc.spread_bps == pytest.approx(1.0)
@@ -169,6 +172,7 @@ class TestTransactionCostsConfig:
 
     def test_config_yields_correct_total_bps(self) -> None:
         from config import load_config
+
         tc = load_config("optimizer").transaction_costs
         total_bps = tc.spread_bps + tc.slippage_bps
         assert total_bps == pytest.approx(3.0)

@@ -1,4 +1,5 @@
 """Tests for src/optimizer/black_litterman.py — Ticket 3.2."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -23,8 +24,8 @@ def _make_inputs(
     rng = np.random.default_rng(seed)
     # PSD covariance via Wishart-like construction (always positive definite)
     A = rng.standard_normal((n + 5, n))
-    sigma = A.T @ A / (n + 5) * 0.04   # ~4% annual variance on diagonal
-    sigma = (sigma + sigma.T) / 2       # enforce exact symmetry
+    sigma = A.T @ A / (n + 5) * 0.04  # ~4% annual variance on diagonal
+    sigma = (sigma + sigma.T) / 2  # enforce exact symmetry
 
     pi = rng.uniform(0.03, 0.12, size=n)
     Q = pi + rng.uniform(-0.02, 0.02, size=n)
@@ -124,7 +125,9 @@ class TestBLSanityChecks:
         sigma, pi, _, P, omega, tau = _make_inputs()
         mu, _ = black_litterman_posterior(pi, sigma, P, pi.copy(), omega, tau)
         np.testing.assert_allclose(
-            mu, pi, atol=0.005,
+            mu,
+            pi,
+            atol=0.005,
             err_msg="Q=π must give μ*=π regardless of omega or tau",
         )
 
@@ -138,7 +141,9 @@ class TestBLSanityChecks:
         omega_tiny = np.diag(np.full(_N, 1e-8))
         mu, _ = black_litterman_posterior(pi, sigma, P, Q, omega_tiny, tau)
         np.testing.assert_allclose(
-            mu, Q, atol=0.01,
+            mu,
+            Q,
+            atol=0.01,
             err_msg="Near-zero Ω must push μ* toward the views Q",
         )
 
@@ -152,7 +157,9 @@ class TestBLSanityChecks:
         omega_huge = np.diag(np.full(_N, 1e8))
         mu, _ = black_litterman_posterior(pi, sigma, P, Q, omega_huge, tau)
         np.testing.assert_allclose(
-            mu, pi, atol=0.005,
+            mu,
+            pi,
+            atol=0.005,
             err_msg="Huge Ω must leave μ* at equilibrium π",
         )
 
@@ -173,7 +180,9 @@ class TestCrossValidationVsPyPortfolioOpt:
         mu_pypo = np.array(bl.bl_returns())
 
         np.testing.assert_allclose(
-            mu_ours, mu_pypo, atol=1e-6,
+            mu_ours,
+            mu_pypo,
+            atol=1e-6,
             err_msg="mu_posterior must match pyportfolioopt to 1e-6",
         )
 
@@ -187,7 +196,9 @@ class TestCrossValidationVsPyPortfolioOpt:
         sigma_post_pypo = np.array(bl.bl_cov())
 
         np.testing.assert_allclose(
-            sigma_post_ours, sigma_post_pypo, atol=1e-6,
+            sigma_post_ours,
+            sigma_post_pypo,
+            atol=1e-6,
             err_msg="sigma_posterior must match pyportfolioopt to 1e-6",
         )
 
@@ -201,7 +212,9 @@ class TestCrossValidationVsPyPortfolioOpt:
             bl = BlackLittermanModel(sigma, pi=pi, Q=Q, P=P, omega=omega, tau=tau)
             mu_pypo = np.array(bl.bl_returns())
             np.testing.assert_allclose(
-                mu_ours, mu_pypo, atol=1e-6,
+                mu_ours,
+                mu_pypo,
+                atol=1e-6,
                 err_msg=f"mu_posterior mismatch at seed={seed}",
             )
 
@@ -214,10 +227,12 @@ class TestCrossValidationVsPyPortfolioOpt:
 class TestBLConfig:
     def test_tau_in_config(self) -> None:
         from config import load_config
+
         cfg = load_config("optimizer")
         assert cfg.black_litterman.tau == pytest.approx(0.05)
 
     def test_tau_positive(self) -> None:
         from config import load_config
+
         cfg = load_config("optimizer")
         assert cfg.black_litterman.tau > 0

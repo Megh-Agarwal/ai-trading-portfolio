@@ -14,6 +14,7 @@ Public API:
 - compute_turnover: L1 norm of weight changes.
 - compute_expected_portfolio_metrics: expected return, vol, Sharpe.
 """
+
 from __future__ import annotations
 
 import logging
@@ -69,13 +70,11 @@ def optimize_weights(
         wv = cp.Variable(n, name="weights")
         pv = cp.quad_form(wv, sigma_sym)
         obj = cp.Maximize(
-            mu @ wv
-            - (risk_aversion / 2.0) * pv
-            - turnover_penalty * cp.norm1(wv - prev_weights)
+            mu @ wv - (risk_aversion / 2.0) * pv - turnover_penalty * cp.norm1(wv - prev_weights)
         )
         constrs = [cp.sum(wv) == 1, wv >= 0, wv <= max_pos]
         if include_vol_constraint:
-            constrs.append(pv <= vol_target ** 2)
+            constrs.append(pv <= vol_target**2)
         return cp.Problem(obj, constrs), wv
 
     def _try_solve(prob: cp.Problem, solver: str) -> bool:
@@ -93,7 +92,9 @@ def optimize_weights(
     if not solved:
         logger.warning(
             "Primary solver %s failed (status=%s); trying %s",
-            solver_primary, problem.status, solver_fallback,
+            solver_primary,
+            problem.status,
+            solver_fallback,
         )
         solved = _try_solve(problem, solver_fallback)
 
@@ -102,7 +103,9 @@ def optimize_weights(
         logger.warning(
             "Fallback solver %s also failed (status=%s); "
             "vol_target=%.2f%% unreachable — dropping vol constraint and re-solving",
-            solver_fallback, problem.status, vol_target * 100,
+            solver_fallback,
+            problem.status,
+            vol_target * 100,
         )
         problem2, w2 = _build_problem(include_vol_constraint=False)
 
@@ -110,7 +113,8 @@ def optimize_weights(
         if not solved2:
             logger.warning(
                 "Primary solver %s failed on relaxed problem; trying %s",
-                solver_primary, solver_fallback,
+                solver_primary,
+                solver_fallback,
             )
             solved2 = _try_solve(problem2, solver_fallback)
 
@@ -125,7 +129,9 @@ def optimize_weights(
 
         assert abs(weights.sum() - 1.0) < 1e-6, f"weights sum {weights.sum():.8f} ≠ 1"
         assert np.all(weights >= -1e-8), f"negative weight: {weights.min():.4e}"
-        assert np.all(weights <= max_pos + 1e-6), f"weight exceeds cap {max_pos}: {weights.max():.4f}"
+        assert np.all(weights <= max_pos + 1e-6), (
+            f"weight exceeds cap {max_pos}: {weights.max():.4f}"
+        )
 
         logger.warning(
             "optimize_weights[infeasible_relaxed]  n=%d  vol_target=%.2f%%  "
@@ -157,7 +163,8 @@ def optimize_weights(
 
     logger.info(
         "optimize_weights[%s]  n=%d  turnover=%.4f  E[r]=%.3f%%  E[σ]=%.3f%%",
-        vol_status, n,
+        vol_status,
+        n,
         float(np.sum(np.abs(weights - prev_weights))),
         float(mu @ weights * 100),
         actual_vol * 100,

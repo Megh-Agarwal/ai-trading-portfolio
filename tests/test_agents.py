@@ -1,4 +1,5 @@
 """Smoke tests for BaseAgent, the three agent output schemas, and NewsAgent."""
+
 from __future__ import annotations
 
 import datetime
@@ -13,7 +14,6 @@ from sqlalchemy.orm import Session
 from agents.base import BaseAgent
 from agents.schemas import MacroRegimeSignal, NewsSignal, PolymarketSignal
 from db.models import Base, Signal
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -53,9 +53,10 @@ class _FakeAgent(BaseAgent):
     def prepare_input(self, date: datetime.date, db) -> dict:
         return {"date": str(date)}
 
-    def _write_signals(self, date, validated, call_id, db) -> None:
+    def _write_signals(self, date, validated, call_id, db, portfolio_id="live") -> None:
         rows = [
             Signal(
+                portfolio_id=portfolio_id,
                 date=date,
                 agent_name=self.agent_name,
                 target=sector,
@@ -98,7 +99,9 @@ _VALID_NEWS = {
     "sector_sentiments": {"XLK": 0.8, "XLF": -0.3, "XLV": 0.0},
     "sector_conviction": {"XLK": 0.75, "XLF": 0.6, "XLV": 0.0},
     "key_themes": ["rate hike fears", "AI spending boom", "energy volatility"],
-    "evidence": [{"sector": "XLK", "headline": "Nvidia beats expectations", "impact": "positive for tech"}],
+    "evidence": [
+        {"sector": "XLK", "headline": "Nvidia beats expectations", "impact": "positive for tech"}
+    ],
 }
 
 
@@ -123,7 +126,9 @@ def test_news_signal_conviction_out_of_range():
 
 def test_news_signal_missing_field():
     with pytest.raises(ValidationError):
-        NewsSignal.model_validate({"sector_conviction": {"XLK": 0.5}, "key_themes": [], "evidence": []})
+        NewsSignal.model_validate(
+            {"sector_conviction": {"XLK": 0.5}, "key_themes": [], "evidence": []}
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +136,7 @@ def test_news_signal_missing_field():
 # ---------------------------------------------------------------------------
 
 _VALID_MACRO = {
-    "reasoning": "VIX elevated and rising. Yield curve deeply inverted. FOMC hawkish language persists.",
+    "reasoning": "VIX elevated and rising. Yield curve deeply inverted. FOMC hawkish language persists.",  # noqa: E501
     "regime": "risk_off",
     "rate_outlook": "rising",
     "confidence": 0.9,
@@ -175,8 +180,16 @@ _VALID_POLY = {
     "implied_probs": {"609655": 0.72, "612300": 0.35},
     "sector_tilts": {s: 0.0 for s in _ALL_SECTORS} | {"XLF": 0.5, "XLU": -0.3},
     "driving_events": [
-        {"sector": "XLF", "market_question": "Fed rate cut by July 2026?", "reasoning": "Rate cut positive for financials"},
-        {"sector": "XLU", "market_question": "US recession by end of 2026?", "reasoning": "Recession bearish for utilities"},
+        {
+            "sector": "XLF",
+            "market_question": "Fed rate cut by July 2026?",
+            "reasoning": "Rate cut positive for financials",
+        },
+        {
+            "sector": "XLU",
+            "market_question": "US recession by end of 2026?",
+            "reasoning": "Recession bearish for utilities",
+        },
     ],
     "time_horizon": "short",
     "overall_confidence": 0.6,
@@ -299,7 +312,12 @@ def test_run_returns_validated_dict(prompt_file):
     agent = _FakeAgent("claude-haiku-4-5-20251001", prompt_file, cache=fake_cache)
     result = agent.run(datetime.date(2024, 1, 15), db)
 
-    assert set(result.keys()) == {"sector_sentiments", "sector_conviction", "key_themes", "evidence"}
+    assert set(result.keys()) == {
+        "sector_sentiments",
+        "sector_conviction",
+        "key_themes",
+        "evidence",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +327,11 @@ def test_run_returns_validated_dict(prompt_file):
 _FULL_NEWS_SIGNAL = {
     "sector_sentiments": {s: 0.0 for s in _ALL_SECTORS} | {"XLK": 0.6, "XLE": -0.4},
     "sector_conviction": {s: 0.1 for s in _ALL_SECTORS} | {"XLK": 0.55, "XLE": 0.5},
-    "key_themes": ["AI spending accelerating", "oil supply surplus emerging", "rate cut expectations easing"],
+    "key_themes": [
+        "AI spending accelerating",
+        "oil supply surplus emerging",
+        "rate cut expectations easing",
+    ],
     "evidence": [
         {"sector": "XLK", "headline": "Nvidia Q1 beats on AI demand", "impact": "positive"},
         {"sector": "XLE", "headline": "OPEC+ agrees to output increase", "impact": "negative"},
@@ -359,6 +381,7 @@ def test_news_agent_prepare_input_ignores_articles_outside_window():
     old_ts = datetime.datetime.combine(date - datetime.timedelta(days=10), datetime.time(12, 0))
     with Session(db) as s:
         from db.models import NewsRaw
+
         s.add(NewsRaw(ticker="AAA", sector="XLK", timestamp=old_ts, title="Old headline"))
         s.commit()
 
@@ -419,11 +442,11 @@ def test_news_agent_run_is_idempotent():
 # ---------------------------------------------------------------------------
 
 _VALID_MACRO_SIGNAL = {
-    "reasoning": "VIX at 18.5, below 90d avg of 20.1 — mild risk-on. T10Y2Y at -0.3, improving from -0.5 avg. DGS10 fell 25bp in 30d signalling rate relief. CPI YoY 3.2%, declining trend. ICSA stable near 210k. Overall: cautious risk-on.",
+    "reasoning": "VIX at 18.5, below 90d avg of 20.1 — mild risk-on. T10Y2Y at -0.3, improving from -0.5 avg. DGS10 fell 25bp in 30d signalling rate relief. CPI YoY 3.2%, declining trend. ICSA stable near 210k. Overall: cautious risk-on.",  # noqa: E501
     "regime": "neutral",
     "rate_outlook": "falling",
     "confidence": 0.68,
-    "rationale": "Mixed but slightly improving macro backdrop. VIX easing and yield curve less inverted point toward neutral-to-risk-on, while still-elevated CPI prevents a full risk-on call. Rate outlook leans falling as the Fed approaches its terminal rate.",
+    "rationale": "Mixed but slightly improving macro backdrop. VIX easing and yield curve less inverted point toward neutral-to-risk-on, while still-elevated CPI prevents a full risk-on call. Rate outlook leans falling as the Fed approaches its terminal rate.",  # noqa: E501
 }
 
 
@@ -452,8 +475,13 @@ def _seed_macro(db, date: datetime.date) -> None:
     from db.models import Macro
 
     series_values = {
-        "VIXCLS": 18.5, "T10Y2Y": -0.35, "DGS10": 4.30,
-        "DTWEXBGS": 103.5, "CPIAUCSL": 309.0, "UNRATE": 3.8, "ICSA": 210000,
+        "VIXCLS": 18.5,
+        "T10Y2Y": -0.35,
+        "DGS10": 4.30,
+        "DTWEXBGS": 103.5,
+        "CPIAUCSL": 309.0,
+        "UNRATE": 3.8,
+        "ICSA": 210000,
     }
 
     rows = []
@@ -580,12 +608,29 @@ def test_macro_agent_run_is_idempotent():
 _FULL_POLY_SIGNAL = {
     "judgments": "No unusual context. Volumes are sufficient on both markets.",
     "implied_probs": {"609655": 0.28, "1439536": 0.71},
-    "sector_tilts": {s: 0.0 for s in _ALL_SECTORS} | {"XLK": 0.18, "XLF": -0.08, "XLY": 0.28, "XLRE": 0.18},
+    "sector_tilts": {s: 0.0 for s in _ALL_SECTORS}
+    | {"XLK": 0.18, "XLF": -0.08, "XLY": 0.28, "XLRE": 0.18},
     "driving_events": [
-        {"sector": "XLK", "market_question": "Fed rate cut by July 2026 meeting?", "reasoning": "Rate cuts boost tech valuations"},
-        {"sector": "XLF", "market_question": "Fed rate cut by July 2026 meeting?", "reasoning": "Rate cuts compress net interest margins"},
-        {"sector": "XLY", "market_question": "Fed rate cut by July 2026 meeting?", "reasoning": "Rate cuts boost consumer discretionary"},
-        {"sector": "XLRE", "market_question": "Fed rate cut by July 2026 meeting?", "reasoning": "Rate cuts reduce REIT discount rates"},
+        {
+            "sector": "XLK",
+            "market_question": "Fed rate cut by July 2026 meeting?",
+            "reasoning": "Rate cuts boost tech valuations",
+        },
+        {
+            "sector": "XLF",
+            "market_question": "Fed rate cut by July 2026 meeting?",
+            "reasoning": "Rate cuts compress net interest margins",
+        },
+        {
+            "sector": "XLY",
+            "market_question": "Fed rate cut by July 2026 meeting?",
+            "reasoning": "Rate cuts boost consumer discretionary",
+        },
+        {
+            "sector": "XLRE",
+            "market_question": "Fed rate cut by July 2026 meeting?",
+            "reasoning": "Rate cuts reduce REIT discount rates",
+        },
     ],
     "time_horizon": "medium",
     "overall_confidence": 0.62,
@@ -602,16 +647,26 @@ def _seed_polymarket(db, market_ids: list[str], date: datetime.date) -> None:
 
     with Session(db) as s:
         for mid in market_ids:
-            s.add(PolymarketRaw(
-                market_id=mid, timestamp=ts_30d,
-                question=f"Question for {mid}", implied_prob=0.50,
-                volume=500000.0, end_date=end_dt,
-            ))
-            s.add(PolymarketRaw(
-                market_id=mid, timestamp=ts_now,
-                question=f"Question for {mid}", implied_prob=0.60,
-                volume=600000.0, end_date=end_dt,
-            ))
+            s.add(
+                PolymarketRaw(
+                    market_id=mid,
+                    timestamp=ts_30d,
+                    question=f"Question for {mid}",
+                    implied_prob=0.50,
+                    volume=500000.0,
+                    end_date=end_dt,
+                )
+            )
+            s.add(
+                PolymarketRaw(
+                    market_id=mid,
+                    timestamp=ts_now,
+                    question=f"Question for {mid}",
+                    implied_prob=0.60,
+                    volume=600000.0,
+                    end_date=end_dt,
+                )
+            )
         s.commit()
 
 

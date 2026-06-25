@@ -10,6 +10,7 @@ Transaction cost convention:
 Slippage is already baked into cost_usd via estimate_trade_cost — the Trade
 row stores 0.0 in the slippage column to avoid double-counting.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -17,7 +18,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from db.models import Trade
+from db.models import PORTFOLIO_LIVE, Trade
 from exceptions import NegativeCashError
 from execution.costs import estimate_trade_cost
 from execution.orders import Order
@@ -62,6 +63,7 @@ def simulate_all_fills(
     date: str,
     db: Session,
     config,  # TransactionCostsConfig
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> list[dict]:
     """Simulate fills for all orders and write trade records to the DB.
 
@@ -73,6 +75,7 @@ def simulate_all_fills(
         date: ISO date string (YYYY-MM-DD) for the trade records.
         db: SQLAlchemy session.
         config: TransactionCostsConfig from optimizer.yaml.
+        portfolio_id: Portfolio namespace for the trade rows.
 
     Returns:
         List of fill dicts (one per order) for downstream apply_fills_to_state.
@@ -82,20 +85,28 @@ def simulate_all_fills(
 
     for order in orders:
         fill = simulate_fill(order, config)
-        db.add(Trade(
-            date=date_obj,
-            ticker=fill["ticker"],
-            side=fill["side"],
-            shares=fill["shares"],
-            price=fill["fill_price"],
-            commission=fill["cost_usd"],
-            slippage=0.0,
-        ))
+        db.add(
+            Trade(
+                portfolio_id=portfolio_id,
+                date=date_obj,
+                ticker=fill["ticker"],
+                side=fill["side"],
+                shares=fill["shares"],
+                price=fill["fill_price"],
+                commission=fill["cost_usd"],
+                slippage=0.0,
+            )
+        )
         fills.append(fill)
         logger.debug(
             "simulate_fill: %s %s %d @ %.2f  gross=$%.2f  cost=$%.4f  net=$%.2f",
-            fill["side"].upper(), fill["ticker"], fill["shares"],
-            fill["fill_price"], fill["gross_value"], fill["cost_usd"], fill["net_value"],
+            fill["side"].upper(),
+            fill["ticker"],
+            fill["shares"],
+            fill["fill_price"],
+            fill["gross_value"],
+            fill["cost_usd"],
+            fill["net_value"],
         )
 
     db.commit()
@@ -107,6 +118,7 @@ def apply_fills_to_state(
     fills: list[dict],
     current_positions: dict[str, float],
     db: Session,
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> dict[str, float]:
     """Apply fill results to portfolio positions and persist the new state.
 
@@ -119,6 +131,7 @@ def apply_fills_to_state(
         fills: List of fill dicts from simulate_all_fills.
         current_positions: {ticker: shares} snapshot before any fills.
         db: SQLAlchemy session.
+        portfolio_id: Portfolio namespace for the position writes.
 
     Returns:
         Updated positions dict after all fills are applied.
@@ -148,9 +161,12 @@ def apply_fills_to_state(
             "Affordability check must have been bypassed or fill math is incorrect."
         )
 
-    write_positions(date, positions, db)
+    write_positions(date, positions, db, portfolio_id=portfolio_id)
     logger.info(
-        "apply_fills_to_state: date=%s  fills=%d  cash=%.2f",
-        date, len(fills), cash_balance,
+        "apply_fills_to_state: portfolio=%s  date=%s  fills=%d  cash=%.2f",
+        portfolio_id,
+        date,
+        len(fills),
+        cash_balance,
     )
     return positions

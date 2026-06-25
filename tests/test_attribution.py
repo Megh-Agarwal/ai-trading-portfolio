@@ -25,6 +25,7 @@ One trade mid-period: buy 10 XLK@$105, commission=$6.30
   avg portfolio = (100k + 105k) / 2 = $102,500
   cost_drag_bps = 6.30 / 102_500 × 10_000 ≈ 0.6146 bps
 """
+
 from __future__ import annotations
 
 import datetime
@@ -41,7 +42,6 @@ from eval.attribution import (
     compute_sector_contribution,
     reconcile_attribution,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -75,30 +75,49 @@ def scenario(db: Session):
     end_obj = datetime.date(2024, 1, 14)
 
     # Portfolio snapshots
-    db.add(PortfolioSnapshot(
-        date=start_obj, total_value=100_000.0,
-        cash=30_000.0, gross_exposure=70_000.0, net_exposure=70_000.0,
-    ))
-    db.add(PortfolioSnapshot(
-        date=end_obj, total_value=105_000.0,
-        cash=30_000.0, gross_exposure=75_000.0, net_exposure=75_000.0,
-    ))
+    db.add(
+        PortfolioSnapshot(
+            date=start_obj,
+            total_value=100_000.0,
+            cash=30_000.0,
+            gross_exposure=70_000.0,
+            net_exposure=70_000.0,
+        )
+    )
+    db.add(
+        PortfolioSnapshot(
+            date=end_obj,
+            total_value=105_000.0,
+            cash=30_000.0,
+            gross_exposure=75_000.0,
+            net_exposure=75_000.0,
+        )
+    )
 
     # Positions at start
     for ticker, shares in [("XLK", 300.0), ("XLF", 1000.0), ("CASH", 30_000.0)]:
-        db.add(Position(date=start_obj, ticker=ticker,
-                        shares=shares, market_value=0.0, cost_basis=0.0))
+        db.add(
+            Position(date=start_obj, ticker=ticker, shares=shares, market_value=0.0, cost_basis=0.0)
+        )
 
     # Positions at end (same shares — no rebalance, prices moved)
     for ticker, shares in [("XLK", 300.0), ("XLF", 1000.0), ("CASH", 30_000.0)]:
-        db.add(Position(date=end_obj, ticker=ticker,
-                        shares=shares, market_value=0.0, cost_basis=0.0))
+        db.add(
+            Position(date=end_obj, ticker=ticker, shares=shares, market_value=0.0, cost_basis=0.0)
+        )
 
     # One trade mid-period
-    db.add(Trade(
-        date=datetime.date(2024, 1, 7), ticker="XLK", side="buy",
-        shares=10.0, price=105.0, commission=6.30, slippage=0.0,
-    ))
+    db.add(
+        Trade(
+            date=datetime.date(2024, 1, 7),
+            ticker="XLK",
+            side="buy",
+            shares=10.0,
+            price=105.0,
+            commission=6.30,
+            slippage=0.0,
+        )
+    )
 
     db.commit()
     return db  # same session, scenario data already committed
@@ -124,20 +143,30 @@ class TestComputePeriodReturn:
             compute_period_return("2023-01-01", _END, db)
 
     def test_missing_end_snapshot_raises(self, db: Session) -> None:
-        db.add(PortfolioSnapshot(
-            date=datetime.date(2024, 1, 1), total_value=100_000.0,
-            cash=30_000.0, gross_exposure=70_000.0, net_exposure=70_000.0,
-        ))
+        db.add(
+            PortfolioSnapshot(
+                date=datetime.date(2024, 1, 1),
+                total_value=100_000.0,
+                cash=30_000.0,
+                gross_exposure=70_000.0,
+                net_exposure=70_000.0,
+            )
+        )
         db.commit()
         with pytest.raises(ValueError, match="end_date"):
             compute_period_return(_START, "2099-12-31", db)
 
     def test_zero_return_when_values_equal(self, db: Session) -> None:
         for d in [datetime.date(2024, 1, 1), datetime.date(2024, 1, 14)]:
-            db.add(PortfolioSnapshot(
-                date=d, total_value=100_000.0,
-                cash=100_000.0, gross_exposure=0.0, net_exposure=0.0,
-            ))
+            db.add(
+                PortfolioSnapshot(
+                    date=d,
+                    total_value=100_000.0,
+                    cash=100_000.0,
+                    gross_exposure=0.0,
+                    net_exposure=0.0,
+                )
+            )
         db.commit()
         result = compute_period_return(_START, _END, db)
         assert result["total_return_pct"] == pytest.approx(0.0)
@@ -182,12 +211,18 @@ class TestComputeSectorContribution:
             (datetime.date(2024, 1, 1), 100_000.0),
             (datetime.date(2024, 1, 14), 100_000.0),
         ]:
-            db.add(PortfolioSnapshot(
-                date=d_obj, total_value=total,
-                cash=total, gross_exposure=0.0, net_exposure=0.0,
-            ))
-            db.add(Position(date=d_obj, ticker="CASH", shares=total,
-                            market_value=0.0, cost_basis=0.0))
+            db.add(
+                PortfolioSnapshot(
+                    date=d_obj,
+                    total_value=total,
+                    cash=total,
+                    gross_exposure=0.0,
+                    net_exposure=0.0,
+                )
+            )
+            db.add(
+                Position(date=d_obj, ticker="CASH", shares=total, market_value=0.0, cost_basis=0.0)
+            )
         db.commit()
         contribs = compute_sector_contribution(_START, _END, db, _PRICES)
         # All sectors: shares=0 → weight=0 → contribution=0
@@ -217,10 +252,15 @@ class TestComputeCostDrag:
             (datetime.date(2024, 1, 1), 100_000.0),
             (datetime.date(2024, 1, 14), 105_000.0),
         ]:
-            db.add(PortfolioSnapshot(
-                date=d_obj, total_value=total,
-                cash=total, gross_exposure=0.0, net_exposure=0.0,
-            ))
+            db.add(
+                PortfolioSnapshot(
+                    date=d_obj,
+                    total_value=total,
+                    cash=total,
+                    gross_exposure=0.0,
+                    net_exposure=0.0,
+                )
+            )
         db.commit()
         result = compute_cost_drag(_START, _END, db)
         assert result["total_cost_usd"] == pytest.approx(0.0)
@@ -228,20 +268,34 @@ class TestComputeCostDrag:
 
     def test_excludes_trades_outside_period(self, scenario: Session) -> None:
         # Trade before period
-        scenario.add(Trade(
-            date=datetime.date(2023, 12, 31), ticker="XLF", side="sell",
-            shares=50.0, price=40.0, commission=100.0, slippage=0.0,
-        ))
+        scenario.add(
+            Trade(
+                date=datetime.date(2023, 12, 31),
+                ticker="XLF",
+                side="sell",
+                shares=50.0,
+                price=40.0,
+                commission=100.0,
+                slippage=0.0,
+            )
+        )
         scenario.commit()
         result = compute_cost_drag(_START, _END, scenario)
         # Only the 6.30 from the fixture trade should be counted
         assert result["total_cost_usd"] == pytest.approx(6.30)
 
     def test_multiple_trades_summed_correctly(self, scenario: Session) -> None:
-        scenario.add(Trade(
-            date=datetime.date(2024, 1, 10), ticker="XLF", side="buy",
-            shares=25.0, price=41.0, commission=3.075, slippage=0.0,
-        ))
+        scenario.add(
+            Trade(
+                date=datetime.date(2024, 1, 10),
+                ticker="XLF",
+                side="buy",
+                shares=25.0,
+                price=41.0,
+                commission=3.075,
+                slippage=0.0,
+            )
+        )
         scenario.commit()
         result = compute_cost_drag(_START, _END, scenario)
         assert result["total_cost_usd"] == pytest.approx(6.30 + 3.075, rel=1e-9)
@@ -295,6 +349,9 @@ class TestReconcileAttribution:
     def test_result_keys_complete(self) -> None:
         result = reconcile_attribution(0.05, {"XLK": 0.05}, 0.0)
         assert set(result.keys()) == {
-            "total_return", "sum_contributions", "cost_drag_fraction",
-            "explained", "unexplained_pct",
+            "total_return",
+            "sum_contributions",
+            "cost_drag_fraction",
+            "explained",
+            "unexplained_pct",
         }

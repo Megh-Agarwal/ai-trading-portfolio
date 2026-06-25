@@ -5,6 +5,7 @@ before reporting cost figures in the paper.
 
 Last verified: 2026-06-12
 """
+
 from __future__ import annotations
 
 import logging

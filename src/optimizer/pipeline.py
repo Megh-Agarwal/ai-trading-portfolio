@@ -6,6 +6,7 @@ End-to-end flow:
 
 This is the function M4's weekly run script will call.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -18,7 +19,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from config import load_config
-from db.models import PortfolioSnapshot, RiskEvent, TargetWeight, View
+from db.models import PORTFOLIO_LIVE, PortfolioSnapshot, RiskEvent, TargetWeight, View
 from execution.costs import estimate_portfolio_rebalance_cost
 from optimizer.black_litterman import black_litterman_posterior, build_picking_matrix
 from optimizer.equilibrium import get_prior
@@ -27,7 +28,7 @@ from optimizer.portfolio import (
     compute_turnover,
     optimize_weights,
 )
-from optimizer.risk_checks import RiskCheckResult, run_all_risk_checks
+from optimizer.risk_checks import run_all_risk_checks
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -46,6 +47,7 @@ def run_optimization_pipeline(
     date: str | datetime.date,
     db: Engine,
     mode: str = "backtest",
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> dict:
     """Run the full optimization pipeline for one rebalance date.
 
@@ -58,6 +60,8 @@ def run_optimization_pipeline(
         db: SQLAlchemy Engine connected to state.db.
         mode: "backtest" or "live". Passed through to the summary dict as
             metadata; does not affect the BL math (views are already in DB).
+        portfolio_id: Portfolio namespace. All reads and writes are scoped to
+            this ID so parallel backtests do not collide.
 
     Returns:
         Summary dict with keys:
@@ -70,12 +74,13 @@ def run_optimization_pipeline(
         and then re-raised. Optimizer failures are never swallowed silently.
     """
     try:
-        return _run(date, db, mode)
+        return _run(date, db, mode, portfolio_id)
     except Exception:
         logger.critical(
-            "Optimizer pipeline FAILED  date=%s  mode=%s\n%s",
+            "Optimizer pipeline FAILED  date=%s  mode=%s  portfolio=%s\n%s",
             date,
             mode,
+            portfolio_id,
             traceback.format_exc(),
         )
         raise
@@ -86,20 +91,18 @@ def run_optimization_pipeline(
 # ---------------------------------------------------------------------------
 
 
-def _run(date: str | datetime.date, db: Engine, mode: str) -> dict:
-    rebalance_date = (
-        datetime.date.fromisoformat(date) if isinstance(date, str) else date
-    )
+def _run(date: str | datetime.date, db: Engine, mode: str, portfolio_id: str) -> dict:
+    rebalance_date = datetime.date.fromisoformat(date) if isinstance(date, str) else date
 
     cfg = load_config("optimizer")
     tickers: list[str] = load_config("universe").ticker_list
     n = len(tickers)
 
     # Step 1 — load views (Q, Omega) from DB; fallback to zero-view equilibrium
-    views_available, Q, omega = _load_views(rebalance_date, tickers, cfg, db)
+    views_available, Q, omega = _load_views(rebalance_date, tickers, cfg, db, portfolio_id)
 
     # Step 2 — load previous week's target weights; equal weights on first run
-    prev_weights = _load_prev_weights(rebalance_date, tickers, n, db)
+    prev_weights = _load_prev_weights(rebalance_date, tickers, n, db, portfolio_id)
 
     # Step 3 — BL prior: equilibrium returns and covariance from price history
     pi, sigma = get_prior(rebalance_date, db)
@@ -117,21 +120,21 @@ def _run(date: str | datetime.date, db: Engine, mode: str) -> dict:
         mu_post, sigma_post, prev_weights, cfg
     )
     _log_vol_constraint_event(
-        rebalance_date, vol_constraint_status, candidate_weights, sigma_post, cfg, db
+        rebalance_date, vol_constraint_status, candidate_weights, sigma_post, cfg, db, portfolio_id
     )
 
     # Step 6 — risk checks; circuit breaker may revert to prev_weights
     final_weights, risk_results = run_all_risk_checks(
-        rebalance_date, candidate_weights, prev_weights, db, cfg
+        rebalance_date, candidate_weights, prev_weights, db, cfg, portfolio_id=portfolio_id
     )
 
     # Step 7 — persist target weights (idempotent: delete-before-insert)
-    _write_target_weights(rebalance_date, tickers, final_weights, db)
+    _write_target_weights(rebalance_date, tickers, final_weights, db, portfolio_id)
 
     # Step 8 — portfolio metrics and cost estimate
     metrics = compute_expected_portfolio_metrics(final_weights, mu_post, sigma_post)
     turnover = compute_turnover(prev_weights, final_weights)
-    portfolio_value = _get_portfolio_value(rebalance_date, db)
+    portfolio_value = _get_portfolio_value(rebalance_date, db, portfolio_id)
     estimated_cost = estimate_portfolio_rebalance_cost(
         prev_weights, final_weights, portfolio_value, cfg.transaction_costs
     )
@@ -177,8 +180,9 @@ def _load_views(
     tickers: list[str],
     cfg,
     db: Engine,
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> tuple[bool, np.ndarray, np.ndarray]:
-    """Load Q and Omega from the views table.
+    """Load Q and Omega from the views table for portfolio_id.
 
     Omega is reconstructed from stored confidence using the same formula as
     views.py: omega_i = omega_base * _WEEKS_PER_YEAR / max(confidence_i, _MIN_CONVICTION).
@@ -187,9 +191,9 @@ def _load_views(
     """
     with Session(db) as session:
         rows = session.execute(
-            select(View.sector, View.expected_return, View.confidence).where(
-                View.date == date
-            )
+            select(View.sector, View.expected_return, View.confidence)
+            .where(View.portfolio_id == portfolio_id)
+            .where(View.date == date)
         ).all()
 
     omega_base: float = cfg.aggregator.omega_base
@@ -229,14 +233,16 @@ def _load_prev_weights(
     tickers: list[str],
     n: int,
     db: Engine,
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> np.ndarray:
-    """Return the most recent target weights strictly before `date`.
+    """Return the most recent target weights strictly before `date` for portfolio_id.
 
     Falls back to equal weights and logs INFO on first run (no history).
     """
     with Session(db) as session:
         prev_date = session.execute(
             select(TargetWeight.date)
+            .where(TargetWeight.portfolio_id == portfolio_id)
             .where(TargetWeight.date < date)
             .order_by(TargetWeight.date.desc())
             .limit(1)
@@ -244,22 +250,21 @@ def _load_prev_weights(
 
         if prev_date is None:
             logger.info(
-                "No previous target weights found — using equal weights (1/n) "
+                "No previous target weights found for portfolio=%s — using equal weights (1/n) "
                 "as starting point for date=%s",
+                portfolio_id,
                 date,
             )
             return np.ones(n, dtype=float) / n
 
         rows = session.execute(
-            select(TargetWeight.sector, TargetWeight.weight).where(
-                TargetWeight.date == prev_date
-            )
+            select(TargetWeight.sector, TargetWeight.weight)
+            .where(TargetWeight.portfolio_id == portfolio_id)
+            .where(TargetWeight.date == prev_date)
         ).all()
 
     weight_by_sector = {r[0]: float(r[1]) for r in rows}
-    weights = np.array(
-        [weight_by_sector.get(t, 1.0 / n) for t in tickers], dtype=float
-    )
+    weights = np.array([weight_by_sector.get(t, 1.0 / n) for t in tickers], dtype=float)
     # Renormalize in case stored weights have minor floating-point drift
     weights /= weights.sum()
     return weights
@@ -276,8 +281,7 @@ def _ensure_psd(sigma: np.ndarray) -> np.ndarray:
         return sigma
     except np.linalg.LinAlgError:
         logger.warning(
-            "Covariance matrix is not PSD (sparse price data?) — "
-            "applying 1e-6 × I regularization"
+            "Covariance matrix is not PSD (sparse price data?) — applying 1e-6 × I regularization"
         )
         return sigma + 1e-6 * np.eye(sigma.shape[0])
 
@@ -287,12 +291,19 @@ def _write_target_weights(
     tickers: list[str],
     weights: np.ndarray,
     db: Engine,
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> None:
-    """Upsert final weights into target_weights table (delete-before-insert)."""
+    """Upsert final weights into target_weights (delete-before-insert, scoped to portfolio_id)."""
     with Session(db) as session:
-        session.execute(delete(TargetWeight).where(TargetWeight.date == date))
+        session.execute(
+            delete(TargetWeight)
+            .where(TargetWeight.portfolio_id == portfolio_id)
+            .where(TargetWeight.date == date)
+        )
         for ticker, w in zip(tickers, weights):
-            session.add(TargetWeight(date=date, sector=ticker, weight=float(w)))
+            session.add(
+                TargetWeight(portfolio_id=portfolio_id, date=date, sector=ticker, weight=float(w))
+            )
         session.commit()
 
 
@@ -303,29 +314,37 @@ def _log_vol_constraint_event(
     sigma: np.ndarray,
     cfg,
     db: Engine,
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> None:
     """Write vol_constraint status as a risk_events row for every rebalance."""
     actual_vol = float(np.sqrt(weights @ sigma @ weights))
     triggered = status == "infeasible_relaxed"
     with Session(db) as session:
-        session.add(RiskEvent(
-            date=date,
-            check_name="vol_constraint",
-            triggered=triggered,
-            value=actual_vol,
-            threshold=cfg.portfolio.vol_target,
-            action_taken="relax_vol_constraint" if triggered else "none",
-            message=(
-                f"vol_constraint_status={status}  "
-                f"actual_vol={actual_vol:.4f}  "
-                f"vol_target={cfg.portfolio.vol_target:.4f}"
-            ),
-        ))
+        session.add(
+            RiskEvent(
+                portfolio_id=portfolio_id,
+                date=date,
+                check_name="vol_constraint",
+                triggered=triggered,
+                value=actual_vol,
+                threshold=cfg.portfolio.vol_target,
+                action_taken="relax_vol_constraint" if triggered else "none",
+                message=(
+                    f"vol_constraint_status={status}  "
+                    f"actual_vol={actual_vol:.4f}  "
+                    f"vol_target={cfg.portfolio.vol_target:.4f}"
+                ),
+            )
+        )
         session.commit()
 
 
-def _get_portfolio_value(date: datetime.date, db: Engine) -> float:
-    """Return the most recent portfolio total value up to `date`.
+def _get_portfolio_value(
+    date: datetime.date,
+    db: Engine,
+    portfolio_id: str = PORTFOLIO_LIVE,
+) -> float:
+    """Return the most recent portfolio total value up to `date` for portfolio_id.
 
     Falls back to _FALLBACK_PORTFOLIO_VALUE when no snapshot exists yet
     (first run before M4 execution layer writes snapshots).
@@ -333,6 +352,7 @@ def _get_portfolio_value(date: datetime.date, db: Engine) -> float:
     with Session(db) as session:
         snap = session.execute(
             select(PortfolioSnapshot.total_value)
+            .where(PortfolioSnapshot.portfolio_id == portfolio_id)
             .where(PortfolioSnapshot.date <= date)
             .order_by(PortfolioSnapshot.date.desc())
             .limit(1)

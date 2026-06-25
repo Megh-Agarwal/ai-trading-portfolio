@@ -1,4 +1,5 @@
 """Tests for src/optimizer/equilibrium.py — Ticket 3.1."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -8,8 +9,8 @@ import pytest
 from optimizer.equilibrium import (
     compute_covariance,
     compute_equilibrium_returns,
-    get_spy_sector_weights,
     get_prior,
+    get_spy_sector_weights,
 )
 
 # ---------------------------------------------------------------------------
@@ -123,7 +124,7 @@ class TestComputeCovariance:
         prices = 100.0 * np.exp(np.cumsum(log_ret, axis=0))
         df = pd.DataFrame(prices, columns=[f"E{i}" for i in range(n_tickers)])
 
-        cov_full = compute_covariance(df, lookback_days=349)   # includes early
+        cov_full = compute_covariance(df, lookback_days=349)  # includes early
         cov_recent = compute_covariance(df, lookback_days=249)  # only late
 
         vol_full = float(np.sqrt(np.diag(cov_full)).mean())
@@ -171,7 +172,7 @@ class TestComputeEquilibriumReturns:
     def test_weights_renormalized_internally(self) -> None:
         """Unnormalized weights (sum ≠ 1) must give the same result as normalized."""
         df = _make_prices()
-        w_raw = {f"ETF_{i}": 5.0 for i in range(_N)}   # sum = 50
+        w_raw = {f"ETF_{i}": 5.0 for i in range(_N)}  # sum = 50
         w_norm = {f"ETF_{i}": 0.1 for i in range(_N)}  # sum = 1
 
         pi_raw = compute_equilibrium_returns(df, w_raw)
@@ -215,22 +216,33 @@ class TestOptimizerConfigWiring:
 
     def test_config_has_all_ten_etfs(self) -> None:
         from config import load_config
+
         cfg = load_config("optimizer")
         universe_tickers = [
-            "XLK", "XLF", "XLV", "XLY", "XLP",
-            "XLE", "XLI", "XLB", "XLRE", "XLU",
+            "XLK",
+            "XLF",
+            "XLV",
+            "XLY",
+            "XLP",
+            "XLE",
+            "XLI",
+            "XLB",
+            "XLRE",
+            "XLU",
         ]
         for ticker in universe_tickers:
             assert ticker in cfg.market_cap_weights, f"{ticker} missing from market_cap_weights"
 
     def test_config_weights_all_positive(self) -> None:
         from config import load_config
+
         cfg = load_config("optimizer")
         assert all(w > 0 for w in cfg.market_cap_weights.values())
 
     def test_config_weights_feed_equilibrium_function(self) -> None:
         """compute_equilibrium_returns accepts raw SSGA weights from config without errors."""
         from config import load_config
+
         cfg = load_config("optimizer")
         df = _make_prices()
         df.columns = list(cfg.market_cap_weights.keys())  # rename to real tickers
@@ -261,7 +273,7 @@ class TestGetSpySectorWeights:
 
     def test_ordering_matches_universe(self) -> None:
         """Weight at index i must correspond to universe[i]."""
-        w_full = get_spy_sector_weights(_UNIVERSE)
+        get_spy_sector_weights(_UNIVERSE)
         w_first = get_spy_sector_weights(["XLK"])
         # XLK is the largest-weight sector; its share should dominate when isolated
         assert abs(w_first[0] - 1.0) < 1e-6
@@ -279,25 +291,33 @@ class TestGetSpySectorWeights:
 def _seed_prices(engine: object, tickers: list[str], n_days: int = 260) -> None:
     """Insert synthetic price rows for all tickers into an in-memory DB."""
     import datetime as dt
-    from db.models import Price
+
     from sqlalchemy.orm import Session
+
+    from db.models import Price
 
     rng = np.random.default_rng(99)
     base_date = dt.date(2024, 1, 1)
     prices_per_ticker = {
-        t: 100.0 * np.exp(np.cumsum(rng.standard_normal(n_days) * 0.01))
-        for t in tickers
+        t: 100.0 * np.exp(np.cumsum(rng.standard_normal(n_days) * 0.01)) for t in tickers
     }
     with Session(engine) as session:
         for day_idx in range(n_days):
             d = base_date + dt.timedelta(days=day_idx)
             for t in tickers:
                 p = float(prices_per_ticker[t][day_idx])
-                session.add(Price(
-                    date=d, ticker=t,
-                    open=p, high=p, low=p, close=p,
-                    adj_close=p, volume=1_000_000,
-                ))
+                session.add(
+                    Price(
+                        date=d,
+                        ticker=t,
+                        open=p,
+                        high=p,
+                        low=p,
+                        close=p,
+                        adj_close=p,
+                        volume=1_000_000,
+                    )
+                )
         session.commit()
 
 
@@ -305,7 +325,9 @@ class TestGetPrior:
     @pytest.fixture()
     def engine(self):
         from sqlalchemy import create_engine
+
         from db.models import Base
+
         eng = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(eng)
         yield eng
@@ -313,6 +335,7 @@ class TestGetPrior:
 
     def test_get_prior_returns_correct_shapes(self, engine) -> None:
         from config import load_config
+
         tickers = load_config("universe").ticker_list
         n = len(tickers)
         _seed_prices(engine, tickers)
@@ -322,6 +345,7 @@ class TestGetPrior:
 
     def test_pi_all_positive(self, engine) -> None:
         from config import load_config
+
         tickers = load_config("universe").ticker_list
         _seed_prices(engine, tickers)
         pi, _ = get_prior("2025-01-01", engine)
@@ -329,6 +353,7 @@ class TestGetPrior:
 
     def test_sigma_is_psd(self, engine) -> None:
         from config import load_config
+
         tickers = load_config("universe").ticker_list
         _seed_prices(engine, tickers)
         _, sigma = get_prior("2025-01-01", engine)

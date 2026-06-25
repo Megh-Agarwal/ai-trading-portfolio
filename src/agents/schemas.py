@@ -1,4 +1,5 @@
 """Pydantic output schemas for the three LLM trading agents."""
+
 from __future__ import annotations
 
 from typing import Literal

@@ -1,4 +1,5 @@
 """Tests for src/optimizer/pipeline.py — Ticket 3.6."""
+
 from __future__ import annotations
 
 import datetime
@@ -57,7 +58,7 @@ def _make_config(**overrides) -> OptimizerConfig:
         },
         "portfolio": {
             "max_position_weight": 0.60,  # relaxed so optimizer has room
-            "vol_target": 0.30,           # relaxed so vol constraint rarely binds
+            "vol_target": 0.30,  # relaxed so vol constraint rarely binds
             "turnover_penalty": 0.00,
             "solver_primary": "CLARABEL",
             "solver_fallback": "SCS",
@@ -75,10 +76,12 @@ def _make_config(**overrides) -> OptimizerConfig:
 
 
 def _make_universe() -> UniverseConfig:
-    return UniverseConfig.model_validate({
-        "benchmark": "SPY",
-        "tickers": [{"ticker": t, "sector": t} for t in _TICKERS],
-    })
+    return UniverseConfig.model_validate(
+        {
+            "benchmark": "SPY",
+            "tickers": [{"ticker": t, "sector": t} for t in _TICKERS],
+        }
+    )
 
 
 def _make_prior() -> tuple[np.ndarray, np.ndarray]:
@@ -120,13 +123,15 @@ def _seed_prev_weights(engine, date, weights=None) -> None:
 def _seed_snapshots(engine, end_date, values: list[float]) -> None:
     with Session(engine) as session:
         for i, v in enumerate(values):
-            session.add(PortfolioSnapshot(
-                date=end_date - datetime.timedelta(days=len(values) - 1 - i),
-                total_value=v,
-                cash=0.0,
-                gross_exposure=1.0,
-                net_exposure=1.0,
-            ))
+            session.add(
+                PortfolioSnapshot(
+                    date=end_date - datetime.timedelta(days=len(values) - 1 - i),
+                    total_value=v,
+                    cash=0.0,
+                    gross_exposure=1.0,
+                    net_exposure=1.0,
+                )
+            )
         session.commit()
 
 
@@ -193,9 +198,17 @@ class TestHappyPath:
         result = run_optimization_pipeline(_DATE, engine, mode="live")
 
         required = {
-            "date", "weights", "expected_return_annual", "expected_vol_annual",
-            "turnover", "estimated_cost_usd", "risk_checks", "any_risk_triggered",
-            "mode", "views_available", "vol_constraint_status",
+            "date",
+            "weights",
+            "expected_return_annual",
+            "expected_vol_annual",
+            "turnover",
+            "estimated_cost_usd",
+            "risk_checks",
+            "any_risk_triggered",
+            "mode",
+            "views_available",
+            "vol_constraint_status",
         }
         assert required <= set(result.keys())
 
@@ -225,9 +238,11 @@ class TestHappyPath:
         run_optimization_pipeline(_DATE, engine)
 
         with Session(engine) as session:
-            rows = session.execute(
-                select(TargetWeight).where(TargetWeight.date == _DATE)
-            ).scalars().all()
+            rows = (
+                session.execute(select(TargetWeight).where(TargetWeight.date == _DATE))
+                .scalars()
+                .all()
+            )
 
         assert len(rows) == _N
         total = sum(r.weight for r in rows)
@@ -375,9 +390,7 @@ class TestIdempotent:
         result2 = run_optimization_pipeline(_DATE, engine)
 
         for ticker in _TICKERS:
-            assert result1["weights"][ticker] == pytest.approx(
-                result2["weights"][ticker], abs=1e-9
-            )
+            assert result1["weights"][ticker] == pytest.approx(result2["weights"][ticker], abs=1e-9)
 
     def test_second_call_does_not_duplicate_db_rows(self, tmp_path, monkeypatch):
         engine = _make_engine(tmp_path)
@@ -390,9 +403,7 @@ class TestIdempotent:
 
         with Session(engine) as session:
             count = session.execute(
-                select(func.count()).select_from(TargetWeight).where(
-                    TargetWeight.date == _DATE
-                )
+                select(func.count()).select_from(TargetWeight).where(TargetWeight.date == _DATE)
             ).scalar()
 
         assert count == _N  # exactly one row per ticker, not 2×N
@@ -406,11 +417,13 @@ class TestIdempotent:
 class TestNonPsdSigma:
     def _non_psd_sigma(self) -> np.ndarray:
         """Build a clearly non-PSD matrix (negative eigenvalue)."""
-        S = np.array([
-            [0.04, 0.10, 0.08],
-            [0.10, 0.025, 0.05],
-            [0.08, 0.05, 0.03],
-        ])
+        S = np.array(
+            [
+                [0.04, 0.10, 0.08],
+                [0.10, 0.025, 0.05],
+                [0.08, 0.05, 0.03],
+            ]
+        )
         return S
 
     def test_warning_logged_when_non_psd(self, tmp_path, monkeypatch, caplog):
@@ -507,9 +520,7 @@ class TestRiskChecksTriggered:
 
         with Session(engine) as session:
             count = session.execute(
-                select(func.count()).select_from(RiskEvent).where(
-                    RiskEvent.date == _DATE
-                )
+                select(func.count()).select_from(RiskEvent).where(RiskEvent.date == _DATE)
             ).scalar()
 
         assert count == 5  # 4 risk checks + 1 vol_constraint row
@@ -592,9 +603,7 @@ class TestIntegration:
         # DB state: exactly one row per ticker
         with Session(engine) as session:
             count = session.execute(
-                select(func.count()).select_from(TargetWeight).where(
-                    TargetWeight.date == _DATE
-                )
+                select(func.count()).select_from(TargetWeight).where(TargetWeight.date == _DATE)
             ).scalar()
         assert count == _N
 
@@ -609,21 +618,15 @@ class TestIntegration:
         result2 = run_optimization_pipeline(_DATE, engine)
 
         for ticker in _TICKERS:
-            assert result1["weights"][ticker] == pytest.approx(
-                result2["weights"][ticker], abs=1e-9
-            )
+            assert result1["weights"][ticker] == pytest.approx(result2["weights"][ticker], abs=1e-9)
 
         with Session(engine) as session:
             count = session.execute(
-                select(func.count()).select_from(TargetWeight).where(
-                    TargetWeight.date == _DATE
-                )
+                select(func.count()).select_from(TargetWeight).where(TargetWeight.date == _DATE)
             ).scalar()
         assert count == _N
 
-    def test_prev_weights_from_earlier_run_are_used_as_starting_point(
-        self, tmp_path, monkeypatch
-    ):
+    def test_prev_weights_from_earlier_run_are_used_as_starting_point(self, tmp_path, monkeypatch):
         """Second-date run reads first-date target_weights as prev_weights."""
         engine = _make_engine(tmp_path)
 
@@ -658,5 +661,6 @@ class TestIntegration:
         first_call_prev = captured_prev[0]
         second_call_prev = captured_prev[1]
         # They differ — second run used first run's output, not equal weights
-        assert not np.allclose(second_call_prev, np.ones(_N) / _N, atol=1e-2) or \
-               np.allclose(first_call_prev, np.ones(_N) / _N, atol=1e-2)
+        assert not np.allclose(second_call_prev, np.ones(_N) / _N, atol=1e-2) or np.allclose(
+            first_call_prev, np.ones(_N) / _N, atol=1e-2
+        )

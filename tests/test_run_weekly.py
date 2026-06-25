@@ -9,17 +9,18 @@ rows to the test DB, mirroring what the real optimizer does, so that
 downstream execution steps (generate_orders, simulate_fills, apply_fills)
 exercise the real code paths.
 """
+
 from __future__ import annotations
 
 import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from config import load_config
-from db.models import Base, Position, PortfolioSnapshot, TargetWeight, Trade
+from db.models import Base, PortfolioSnapshot, Position, TargetWeight, Trade
 from weekly_run import _already_executed, _fetch_prices_for_date, run_weekly
 
 # ---------------------------------------------------------------------------
@@ -36,8 +37,16 @@ _EQUAL_WEIGHTS = {t: 0.097 for t in _TICKERS}
 
 # Realistic fake prices for all 10 sector ETFs
 _FAKE_PRICES = {
-    "XLK": 200.0, "XLF": 40.0, "XLV": 130.0, "XLY": 170.0, "XLP": 75.0,
-    "XLE": 85.0, "XLI": 110.0, "XLB": 90.0, "XLRE": 40.0, "XLU": 65.0,
+    "XLK": 200.0,
+    "XLF": 40.0,
+    "XLV": 130.0,
+    "XLY": 170.0,
+    "XLP": 75.0,
+    "XLE": 85.0,
+    "XLI": 110.0,
+    "XLB": 90.0,
+    "XLRE": 40.0,
+    "XLU": 65.0,
 }
 
 
@@ -50,18 +59,25 @@ _FAKE_PRICES = {
 def db_engine():
     """In-memory SQLite engine with all tables and fake price rows for _DATE."""
     from db.models import Price
+
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
 
     # Seed prices for the rebalance date so _fetch_prices_for_date returns data
     with Session(engine) as session:
         for ticker, price in _FAKE_PRICES.items():
-            session.add(Price(
-                date=_DATE_OBJ,
-                ticker=ticker,
-                open=price, high=price, low=price,
-                close=price, volume=1_000_000, adj_close=price,
-            ))
+            session.add(
+                Price(
+                    date=_DATE_OBJ,
+                    ticker=ticker,
+                    open=price,
+                    high=price,
+                    low=price,
+                    close=price,
+                    volume=1_000_000,
+                    adj_close=price,
+                )
+            )
         session.commit()
 
     yield engine
@@ -70,12 +86,19 @@ def db_engine():
 
 def _make_optimizer_mock():
     """side_effect for run_optimization_pipeline: writes TargetWeight rows + returns dict."""
-    def _mock(date, db, mode="backtest"):
+
+    def _mock(date, db, mode="backtest", portfolio_id="live"):
         date_obj = datetime.date.fromisoformat(date) if isinstance(date, str) else date
         with Session(db) as session:
-            session.execute(delete(TargetWeight).where(TargetWeight.date == date_obj))
+            session.execute(
+                delete(TargetWeight)
+                .where(TargetWeight.portfolio_id == portfolio_id)
+                .where(TargetWeight.date == date_obj)
+            )
             for t, w in _EQUAL_WEIGHTS.items():
-                session.add(TargetWeight(date=date_obj, sector=t, weight=w))
+                session.add(
+                    TargetWeight(portfolio_id=portfolio_id, date=date_obj, sector=t, weight=w)
+                )
             session.commit()
         return {
             "date": str(date_obj),
@@ -90,12 +113,14 @@ def _make_optimizer_mock():
             "views_available": True,
             "vol_constraint_status": "not_binding",
         }
+
     return _mock
 
 
 def _make_agent_mock():
     """side_effect for run_agent_pipeline — returns canned dict, no API calls."""
-    def _mock(date, db, mode="backtest", weights=None):
+
+    def _mock(date, db, mode="backtest", weights=None, portfolio_id="live"):
         return {
             "date": str(date),
             "signals_by_agent": {
@@ -107,12 +132,14 @@ def _make_agent_mock():
             "total_cost_usd": 0.0,
             "total_latency_ms": 1.0,
         }
+
     return _mock
 
 
 # ---------------------------------------------------------------------------
 # Core patches applied to every test in this module
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _mock_all_external(monkeypatch):
@@ -164,9 +191,7 @@ class TestFullSequenceWritesExpectedRows:
         run_weekly(_DATE, "backtest", db_engine)
         with Session(db_engine) as session:
             count = session.execute(
-                select(func.count())
-                .select_from(TargetWeight)
-                .where(TargetWeight.date == _DATE_OBJ)
+                select(func.count()).select_from(TargetWeight).where(TargetWeight.date == _DATE_OBJ)
             ).scalar()
         assert count == _N
 
@@ -269,20 +294,30 @@ class TestAlreadyExecuted:
 
     def test_returns_false_with_only_positions(self, db_engine) -> None:
         with Session(db_engine) as session:
-            session.add(Position(
-                date=_DATE_OBJ, ticker="CASH", shares=1_000_000.0,
-                market_value=0.0, cost_basis=0.0,
-            ))
+            session.add(
+                Position(
+                    date=_DATE_OBJ,
+                    ticker="CASH",
+                    shares=1_000_000.0,
+                    market_value=0.0,
+                    cost_basis=0.0,
+                )
+            )
             session.commit()
         assert _already_executed(_DATE_OBJ, db_engine) is False
 
     def test_returns_true_with_both(self, db_engine) -> None:
         with Session(db_engine) as session:
             session.add(TargetWeight(date=_DATE_OBJ, sector="XLK", weight=0.1))
-            session.add(Position(
-                date=_DATE_OBJ, ticker="CASH", shares=1_000_000.0,
-                market_value=0.0, cost_basis=0.0,
-            ))
+            session.add(
+                Position(
+                    date=_DATE_OBJ,
+                    ticker="CASH",
+                    shares=1_000_000.0,
+                    market_value=0.0,
+                    cost_basis=0.0,
+                )
+            )
             session.commit()
         assert _already_executed(_DATE_OBJ, db_engine) is True
 
@@ -303,15 +338,23 @@ class TestFetchPricesForDate:
     def test_uses_most_recent_price_before_date(self, db_engine) -> None:
         """Prices from a day before the rebalance date are used when no same-day row."""
         from db.models import Price
+
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(engine)
         prior_date = datetime.date(2024, 6, 6)
         with Session(engine) as session:
-            session.add(Price(
-                date=prior_date, ticker="XLK",
-                open=195.0, high=195.0, low=195.0,
-                close=195.0, volume=1_000_000, adj_close=195.0,
-            ))
+            session.add(
+                Price(
+                    date=prior_date,
+                    ticker="XLK",
+                    open=195.0,
+                    high=195.0,
+                    low=195.0,
+                    close=195.0,
+                    volume=1_000_000,
+                    adj_close=195.0,
+                )
+            )
             session.commit()
         prices = _fetch_prices_for_date(_DATE_OBJ, ["XLK"], engine)
         assert prices["XLK"] == pytest.approx(195.0)

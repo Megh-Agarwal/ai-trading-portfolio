@@ -19,13 +19,13 @@ logger = logging.getLogger(__name__)
 _BUFFER_DAYS = 90
 
 SERIES_IDS = [
-    "T10Y2Y",    # 10Y-2Y Treasury spread (daily)
-    "DGS10",     # 10Y Treasury yield (daily)
-    "VIXCLS",    # VIX (daily)
+    "T10Y2Y",  # 10Y-2Y Treasury spread (daily)
+    "DGS10",  # 10Y Treasury yield (daily)
+    "VIXCLS",  # VIX (daily)
     "DTWEXBGS",  # Trade-weighted USD index (daily)
     "CPIAUCSL",  # CPI (monthly)
-    "UNRATE",    # Unemployment rate (monthly)
-    "ICSA",      # Initial jobless claims (weekly)
+    "UNRATE",  # Unemployment rate (monthly)
+    "ICSA",  # Initial jobless claims (weekly)
 ]
 
 
@@ -70,14 +70,15 @@ def fetch_macro(
         # Reindex over buffer + window, forward-fill, then clip to [start, end]
         full_index = pd.date_range(pd.Timestamp(fetch_start), pd.Timestamp(end), freq="D")
         daily = raw.reindex(full_index).ffill()
-        daily = daily.loc[pd.Timestamp(start): pd.Timestamp(end)]
+        daily = daily.loc[pd.Timestamp(start) : pd.Timestamp(end)]
 
         nan_count = int(daily.isna().sum())
         if nan_count:
             logger.warning(
                 "QUALITY [%s]: %d NaN values after forward-fill "
                 "(series may start after requested window) — rows dropped",
-                sid, nan_count,
+                sid,
+                nan_count,
             )
             daily = daily.dropna()
 

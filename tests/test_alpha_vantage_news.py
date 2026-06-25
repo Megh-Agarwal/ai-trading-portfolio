@@ -14,7 +14,6 @@ from ingestion.alpha_vantage_news import (
     write_av_news,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -79,8 +78,10 @@ def engine():
 
 class TestFetchAvNews:
     def test_returns_articles_for_matched_tickers(self):
-        with patch("ingestion.alpha_vantage_news.requests.get") as mock_get, \
-             patch("ingestion.alpha_vantage_news._rate_limit"):
+        with (
+            patch("ingestion.alpha_vantage_news.requests.get") as mock_get,
+            patch("ingestion.alpha_vantage_news._rate_limit"),
+        ):
             mock_get.return_value = _make_av_response([_ARTICLE_AAPL])
             articles = fetch_av_news(["AAPL"], _T_FROM, _T_TO, api_key="test")
 
@@ -92,8 +93,10 @@ class TestFetchAvNews:
 
     def test_fans_out_article_to_multiple_queried_tickers(self):
         # Both AAPL and MSFT appear in ticker_sentiment; querying both → two rows
-        with patch("ingestion.alpha_vantage_news.requests.get") as mock_get, \
-             patch("ingestion.alpha_vantage_news._rate_limit"):
+        with (
+            patch("ingestion.alpha_vantage_news.requests.get") as mock_get,
+            patch("ingestion.alpha_vantage_news._rate_limit"),
+        ):
             mock_get.return_value = _make_av_response([_ARTICLE_AAPL])
             articles = fetch_av_news(["AAPL", "MSFT"], _T_FROM, _T_TO, api_key="test")
 
@@ -106,8 +109,10 @@ class TestFetchAvNews:
 
     def test_excludes_tickers_not_in_query_set(self):
         # Query only AAPL; MSFT also appears in ticker_sentiment but should be excluded
-        with patch("ingestion.alpha_vantage_news.requests.get") as mock_get, \
-             patch("ingestion.alpha_vantage_news._rate_limit"):
+        with (
+            patch("ingestion.alpha_vantage_news.requests.get") as mock_get,
+            patch("ingestion.alpha_vantage_news._rate_limit"),
+        ):
             mock_get.return_value = _make_av_response([_ARTICLE_AAPL])
             articles = fetch_av_news(["AAPL"], _T_FROM, _T_TO, api_key="test")
 
@@ -115,8 +120,10 @@ class TestFetchAvNews:
 
     def test_skips_article_whose_ticker_sentiment_contains_no_queried_tickers(self):
         # Article has ticker_sentiment=[XOM] but we queried AAPL — AV says it's about XOM, skip it.
-        with patch("ingestion.alpha_vantage_news.requests.get") as mock_get, \
-             patch("ingestion.alpha_vantage_news._rate_limit"):
+        with (
+            patch("ingestion.alpha_vantage_news.requests.get") as mock_get,
+            patch("ingestion.alpha_vantage_news._rate_limit"),
+        ):
             mock_get.return_value = _make_av_response([_ARTICLE_UNRELATED])
             articles = fetch_av_news(["AAPL"], _T_FROM, _T_TO, api_key="test")
 
@@ -126,8 +133,10 @@ class TestFetchAvNews:
         # AV returned this article for our AAPL query but ticker_sentiment is absent.
         # Fall back: attribute to the queried ticker.
         article_no_sentiment = {**_ARTICLE_AAPL, "ticker_sentiment": []}
-        with patch("ingestion.alpha_vantage_news.requests.get") as mock_get, \
-             patch("ingestion.alpha_vantage_news._rate_limit"):
+        with (
+            patch("ingestion.alpha_vantage_news.requests.get") as mock_get,
+            patch("ingestion.alpha_vantage_news._rate_limit"),
+        ):
             mock_get.return_value = _make_av_response([article_no_sentiment])
             articles = fetch_av_news(["AAPL"], _T_FROM, _T_TO, api_key="test")
 
@@ -135,8 +144,10 @@ class TestFetchAvNews:
         assert articles[0]["ticker"] == "AAPL"
 
     def test_handles_empty_feed(self):
-        with patch("ingestion.alpha_vantage_news.requests.get") as mock_get, \
-             patch("ingestion.alpha_vantage_news._rate_limit"):
+        with (
+            patch("ingestion.alpha_vantage_news.requests.get") as mock_get,
+            patch("ingestion.alpha_vantage_news._rate_limit"),
+        ):
             mock_get.return_value = _make_av_response([])
             articles = fetch_av_news(["AAPL"], _T_FROM, _T_TO, api_key="test")
 
@@ -145,11 +156,11 @@ class TestFetchAvNews:
     def test_raises_on_information_key(self):
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = {
-            "Information": "API call frequency limit reached."
-        }
-        with patch("ingestion.alpha_vantage_news.requests.get", return_value=mock_resp), \
-             patch("ingestion.alpha_vantage_news._rate_limit"):
+        mock_resp.json.return_value = {"Information": "API call frequency limit reached."}
+        with (
+            patch("ingestion.alpha_vantage_news.requests.get", return_value=mock_resp),
+            patch("ingestion.alpha_vantage_news._rate_limit"),
+        ):
             with pytest.raises(RuntimeError, match="Alpha Vantage API error"):
                 fetch_av_news(["AAPL"], _T_FROM, _T_TO, api_key="test")
 
@@ -161,15 +172,19 @@ class TestFetchAvNews:
     def test_raises_on_http_error(self):
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = Exception("500 Server Error")
-        with patch("ingestion.alpha_vantage_news.requests.get", return_value=mock_resp), \
-             patch("ingestion.alpha_vantage_news._rate_limit"):
+        with (
+            patch("ingestion.alpha_vantage_news.requests.get", return_value=mock_resp),
+            patch("ingestion.alpha_vantage_news._rate_limit"),
+        ):
             with pytest.raises(Exception, match="500"):
                 fetch_av_news(["AAPL"], _T_FROM, _T_TO, api_key="test")
 
     def test_skips_article_with_unparseable_timestamp(self):
         bad_article = {**_ARTICLE_AAPL, "time_published": "not-a-date"}
-        with patch("ingestion.alpha_vantage_news.requests.get") as mock_get, \
-             patch("ingestion.alpha_vantage_news._rate_limit"):
+        with (
+            patch("ingestion.alpha_vantage_news.requests.get") as mock_get,
+            patch("ingestion.alpha_vantage_news._rate_limit"),
+        ):
             mock_get.return_value = _make_av_response([bad_article, _ARTICLE_MSFT_ONLY])
             articles = fetch_av_news(["AAPL", "MSFT"], _T_FROM, _T_TO, api_key="test")
 
@@ -218,9 +233,11 @@ class TestWriteAvNews:
         assert n == 1
 
         with Session(engine) as session:
-            rows = session.execute(
-                select(NewsRaw).where(NewsRaw.url == "https://example.com/shared")
-            ).scalars().all()
+            rows = (
+                session.execute(select(NewsRaw).where(NewsRaw.url == "https://example.com/shared"))
+                .scalars()
+                .all()
+            )
         assert len(rows) == 2
         assert {r.ticker for r in rows} == {"AAPL", "MSFT"}
 

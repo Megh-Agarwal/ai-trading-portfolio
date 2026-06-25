@@ -1,4 +1,5 @@
 """Tests for src/execution/state.py — Ticket 4.1."""
+
 from __future__ import annotations
 
 import pytest
@@ -77,9 +78,7 @@ class TestWriteIsIdempotentNoDuplicates:
         write_positions("2024-01-05", positions, db)
         write_positions("2024-01-05", positions, db)
 
-        count = db.execute(
-            select(func.count()).where(Position.date == "2024-01-05")
-        ).scalar()
+        count = db.execute(select(func.count()).where(Position.date == "2024-01-05")).scalar()
         assert count == len(positions)
 
     def test_second_write_updates_shares(self, db: Session) -> None:
@@ -158,15 +157,16 @@ class TestWritePortfolioSnapshot:
     def test_snapshot_is_idempotent(self, db: Session) -> None:
         """Writing a snapshot twice for the same date keeps exactly one row."""
         from db.models import PortfolioSnapshot
+
         write_positions("2024-01-05", {"CASH": 50_000.0, "XLK": 100.0}, db)
         prices = {"XLK": 100.0}
         write_portfolio_snapshot("2024-01-05", db, prices)
         write_portfolio_snapshot("2024-01-05", db, prices)
 
         count = db.execute(
-            select(func.count()).select_from(PortfolioSnapshot).where(
-                PortfolioSnapshot.date == "2024-01-05"
-            )
+            select(func.count())
+            .select_from(PortfolioSnapshot)
+            .where(PortfolioSnapshot.date == "2024-01-05")
         ).scalar()
         assert count == 1
 

@@ -9,6 +9,7 @@ Public API:
 - estimate_portfolio_rebalance_cost: total cost for a full rebalance.
 - compute_cost_drag_bps: express a USD cost as portfolio bps for attribution.
 """
+
 from __future__ import annotations
 
 import logging
@@ -77,7 +78,8 @@ def estimate_portfolio_rebalance_cost(
 
     logger.debug(
         "estimate_portfolio_rebalance_cost  portfolio=$%.0f  cost=$%.2f  (%.2f bps drag)",
-        portfolio_value, total_cost,
+        portfolio_value,
+        total_cost,
         compute_cost_drag_bps(total_cost, portfolio_value) if portfolio_value > 0 else 0,
     )
     return total_cost

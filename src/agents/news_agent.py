@@ -1,18 +1,18 @@
 """News sentiment agent — Agent 1 of 3."""
+
 from __future__ import annotations
 
 import datetime
 import logging
 from pathlib import Path
 
-from sqlalchemy import delete, select
-from sqlalchemy import Engine
+from sqlalchemy import Engine, delete, select
 from sqlalchemy.orm import Session
 
 from agents.base import BaseAgent
 from agents.schemas import NewsSignal
 from config import load_config
-from db.models import NewsRaw, Signal
+from db.models import PORTFOLIO_LIVE, NewsRaw, Signal
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ _TOOL: dict = {
             },
             "key_themes": {
                 "type": "array",
-                "description": "3 to 5 short phrases describing the dominant market narratives this week",
+                "description": "3 to 5 short phrases describing the dominant market narratives this week",  # noqa: E501
                 "items": {"type": "string"},
                 "minItems": 3,
                 "maxItems": 5,
@@ -175,11 +175,13 @@ class NewsAgent(BaseAgent):
         validated: dict,
         call_id: int | None,
         db: Engine,
+        portfolio_id: str = PORTFOLIO_LIVE,
     ) -> None:
         """Write one Signal row per sector using per-sector conviction; idempotent."""
         sector_conviction = validated["sector_conviction"]
         rows = [
             Signal(
+                portfolio_id=portfolio_id,
                 date=date,
                 agent_name=self.agent_name,
                 target=sector,
@@ -193,13 +195,16 @@ class NewsAgent(BaseAgent):
         with Session(db) as session:
             session.execute(
                 delete(Signal)
+                .where(Signal.portfolio_id == portfolio_id)
                 .where(Signal.date == date)
                 .where(Signal.agent_name == self.agent_name)
             )
             session.add_all(rows)
             session.commit()
 
-        avg_conv = sum(sector_conviction.values()) / len(sector_conviction) if sector_conviction else 0.0
+        avg_conv = (
+            sum(sector_conviction.values()) / len(sector_conviction) if sector_conviction else 0.0
+        )
         logger.info(
             "Wrote %d signal rows  date=%s  agent=%s  avg_conviction=%.2f",
             len(rows),

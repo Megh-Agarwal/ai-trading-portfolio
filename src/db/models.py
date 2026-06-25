@@ -16,6 +16,22 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+# ---------------------------------------------------------------------------
+# Portfolio ID constants — all backtest portfolios and the live portfolio
+# ---------------------------------------------------------------------------
+PORTFOLIO_LIVE = "live"
+PORTFOLIO_BACKTEST_FULL = "backtest_full"
+PORTFOLIO_BACKTEST_NO_LLM = "backtest_no_llm"
+PORTFOLIO_BACKTEST_EQUAL_WEIGHT = "backtest_equal_weight"
+PORTFOLIO_BACKTEST_SPY = "backtest_spy"
+
+ALL_BACKTEST_PORTFOLIO_IDS = [
+    PORTFOLIO_BACKTEST_FULL,
+    PORTFOLIO_BACKTEST_NO_LLM,
+    PORTFOLIO_BACKTEST_EQUAL_WEIGHT,
+    PORTFOLIO_BACKTEST_SPY,
+]
+
 
 class Base(DeclarativeBase):
     pass
@@ -92,6 +108,7 @@ class Signal(Base):
     __tablename__ = "signals"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    portfolio_id: Mapped[str] = mapped_column(String(20), default=PORTFOLIO_LIVE)
     date: Mapped[datetime.date] = mapped_column(Date)
     agent_name: Mapped[str] = mapped_column(String(100))
     target: Mapped[str] = mapped_column(String(50))
@@ -99,10 +116,13 @@ class Signal(Base):
     confidence: Mapped[float | None] = mapped_column(Float)
     raw_call_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("agent_calls.call_id"))
 
+    __table_args__ = (Index("ix_signals_portfolio_date", "portfolio_id", "date"),)
+
 
 class View(Base):
     __tablename__ = "views"
 
+    portfolio_id: Mapped[str] = mapped_column(String(20), primary_key=True, default=PORTFOLIO_LIVE)
     date: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
     sector: Mapped[str] = mapped_column(String(50), primary_key=True)
     expected_return: Mapped[float] = mapped_column(Float)
@@ -112,6 +132,7 @@ class View(Base):
 class TargetWeight(Base):
     __tablename__ = "target_weights"
 
+    portfolio_id: Mapped[str] = mapped_column(String(20), primary_key=True, default=PORTFOLIO_LIVE)
     date: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
     sector: Mapped[str] = mapped_column(String(50), primary_key=True)
     weight: Mapped[float] = mapped_column(Float)
@@ -121,6 +142,7 @@ class Trade(Base):
     __tablename__ = "trades"
 
     trade_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    portfolio_id: Mapped[str] = mapped_column(String(20), default=PORTFOLIO_LIVE)
     date: Mapped[datetime.date] = mapped_column(Date)
     ticker: Mapped[str] = mapped_column(String(20))
     side: Mapped[str] = mapped_column(String(4))  # "buy" | "sell"
@@ -129,35 +151,42 @@ class Trade(Base):
     commission: Mapped[float] = mapped_column(Float)
     slippage: Mapped[float] = mapped_column(Float)
 
+    __table_args__ = (Index("ix_trades_portfolio_date", "portfolio_id", "date"),)
+
 
 class Position(Base):
     __tablename__ = "positions"
 
+    portfolio_id: Mapped[str] = mapped_column(String(20), primary_key=True, default=PORTFOLIO_LIVE)
     date: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
     ticker: Mapped[str] = mapped_column(String(20), primary_key=True)
     shares: Mapped[float] = mapped_column(Float)
     market_value: Mapped[float] = mapped_column(Float)
     cost_basis: Mapped[float] = mapped_column(Float)
 
-    __table_args__ = (Index("ix_positions_date_ticker", "date", "ticker"),)
+    __table_args__ = (
+        Index("ix_positions_portfolio_date_ticker", "portfolio_id", "date", "ticker"),
+    )
 
 
 class PortfolioSnapshot(Base):
     __tablename__ = "portfolio_snapshot"
 
+    portfolio_id: Mapped[str] = mapped_column(String(20), primary_key=True, default=PORTFOLIO_LIVE)
     date: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
     total_value: Mapped[float] = mapped_column(Float)
     cash: Mapped[float] = mapped_column(Float)
     gross_exposure: Mapped[float] = mapped_column(Float)
     net_exposure: Mapped[float] = mapped_column(Float)
 
-    __table_args__ = (Index("ix_portfolio_snapshot_date", "date"),)
+    __table_args__ = (Index("ix_portfolio_snapshot_portfolio_date", "portfolio_id", "date"),)
 
 
 class RiskEvent(Base):
     __tablename__ = "risk_events"
 
     event_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    portfolio_id: Mapped[str] = mapped_column(String(20), default=PORTFOLIO_LIVE)
     date: Mapped[datetime.date] = mapped_column(Date)
     check_name: Mapped[str] = mapped_column(String(100))
     triggered: Mapped[bool] = mapped_column(Boolean)
@@ -166,4 +195,4 @@ class RiskEvent(Base):
     action_taken: Mapped[str | None] = mapped_column(String(200))
     message: Mapped[str | None] = mapped_column(Text)
 
-    __table_args__ = (Index("ix_risk_events_date", "date"),)
+    __table_args__ = (Index("ix_risk_events_portfolio_date", "portfolio_id", "date"),)

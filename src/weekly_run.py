@@ -15,6 +15,7 @@ Sequence for each run:
   8. Apply fills to state → write positions + snapshot
   9. Return structured summary
 """
+
 from __future__ import annotations
 
 import datetime
@@ -26,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from agents.pipeline import run_agent_pipeline
 from config import load_config
-from db.models import Position, Price, TargetWeight
+from db.models import PORTFOLIO_LIVE, Position, Price, TargetWeight
 from execution.fill_simulator import apply_fills_to_state, simulate_all_fills
 from execution.orders import generate_orders, validate_orders_affordable
 from execution.state import (
@@ -104,6 +105,7 @@ def _ingest_fresh_data(date_obj: datetime.date, mode: str, db_engine: Engine) ->
                 load_curated_markets,
                 write_polymarket,
             )
+
             markets = load_curated_markets()
             snapshots = fetch_current_state(markets)
             write_polymarket(snapshots, db_engine)
@@ -139,13 +141,18 @@ def _fetch_prices_for_date(
     return prices
 
 
-def _already_executed(date_obj: datetime.date, db_engine: Engine) -> bool:
-    """Return True if target_weights and positions both exist for this date."""
+def _already_executed(
+    date_obj: datetime.date,
+    db_engine: Engine,
+    portfolio_id: str = PORTFOLIO_LIVE,
+) -> bool:
+    """Return True if target_weights and positions both exist for this date and portfolio_id."""
     with Session(db_engine) as session:
         has_weights = (
             session.execute(
                 select(func.count())
                 .select_from(TargetWeight)
+                .where(TargetWeight.portfolio_id == portfolio_id)
                 .where(TargetWeight.date == date_obj)
             ).scalar()
             or 0
@@ -154,6 +161,7 @@ def _already_executed(date_obj: datetime.date, db_engine: Engine) -> bool:
             session.execute(
                 select(func.count())
                 .select_from(Position)
+                .where(Position.portfolio_id == portfolio_id)
                 .where(Position.date == date_obj)
             ).scalar()
             or 0
@@ -172,6 +180,7 @@ def run_weekly(
     mode: str,
     db_engine: Engine,
     force: bool = False,
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> dict:
     """Run one full weekly rebalance cycle.
 
@@ -180,6 +189,9 @@ def run_weekly(
         mode: "backtest" or "live". Controls Polymarket aggregator weight (ADR-012).
         db_engine: SQLAlchemy Engine for state.db.
         force: Override the idempotency check and re-run even if already executed.
+        portfolio_id: Portfolio namespace. All writes (signals, views, weights,
+            trades, positions, snapshots, risk_events) are scoped to this ID.
+            Defaults to "live" for backward compatibility.
 
     Returns:
         Summary dict. On a skipped run: {"skipped": True, "reason": ..., "date": ...}.
@@ -189,28 +201,36 @@ def run_weekly(
             Ingestion failures are non-fatal (except prices).
     """
     date_obj = datetime.date.fromisoformat(date_str)
-    logger.info("=== run_weekly  date=%s  mode=%s  force=%s ===", date_str, mode, force)
+    logger.info(
+        "=== run_weekly  date=%s  mode=%s  portfolio=%s  force=%s ===",
+        date_str,
+        mode,
+        portfolio_id,
+        force,
+    )
 
     # ── idempotency guard ─────────────────────────────────────────────────
-    if not force and _already_executed(date_obj, db_engine):
-        msg = f"Rebalance for {date_str} already executed, skipping"
+    if not force and _already_executed(date_obj, db_engine, portfolio_id=portfolio_id):
+        msg = f"Rebalance for {date_str} portfolio={portfolio_id} already executed, skipping"
         logger.info(msg)
         return {"skipped": True, "reason": msg, "date": date_str}
 
     cfg = load_config("optimizer")
     tickers = load_config("universe").ticker_list
-    summary: dict = {"date": date_str, "mode": mode, "skipped": False}
+    summary: dict = {"date": date_str, "mode": mode, "skipped": False, "portfolio_id": portfolio_id}
 
     # ── step 1: ingest ────────────────────────────────────────────────────
     _ingest_fresh_data(date_obj, mode, db_engine)
 
     # ── step 2: agent pipeline ────────────────────────────────────────────
-    agent_result = run_agent_pipeline(date_obj, db_engine, mode=mode)
+    agent_result = run_agent_pipeline(date_obj, db_engine, mode=mode, portfolio_id=portfolio_id)
     summary["llm_cost_usd"] = agent_result["total_cost_usd"]
     logger.info("Agent pipeline complete  cost=$%.5f", agent_result["total_cost_usd"])
 
     # ── step 3: optimization pipeline ─────────────────────────────────────
-    opt_result = run_optimization_pipeline(date_str, db_engine, mode=mode)
+    opt_result = run_optimization_pipeline(
+        date_str, db_engine, mode=mode, portfolio_id=portfolio_id
+    )
     target_weights: dict[str, float] = opt_result["weights"]
     summary.update(
         {
@@ -225,9 +245,13 @@ def run_weekly(
     prices = _fetch_prices_for_date(date_obj, tickers, db_engine)
 
     with Session(db_engine) as session:
-        current_positions = get_current_positions(date_str, session)
-        weights_before = compute_current_weights(date_str, session, prices)
-        portfolio_value_before = get_portfolio_value(date_str, session, prices)
+        current_positions = get_current_positions(date_str, session, portfolio_id=portfolio_id)
+        weights_before = compute_current_weights(
+            date_str, session, prices, portfolio_id=portfolio_id
+        )
+        portfolio_value_before = get_portfolio_value(
+            date_str, session, prices, portfolio_id=portfolio_id
+        )
 
     summary["portfolio_value_before"] = portfolio_value_before
     summary["weights_before"] = {t: weights_before.get(t, 0.0) for t in tickers}
@@ -241,9 +265,7 @@ def run_weekly(
         prices=prices,
         min_trade_threshold=cfg.transaction_costs.min_trade_threshold,
     )
-    orders = [o for o in orders if o.side == "sell"] + [
-        o for o in orders if o.side == "buy"
-    ]
+    orders = [o for o in orders if o.side == "sell"] + [o for o in orders if o.side == "buy"]
     summary["orders_count"] = len(orders)
 
     available_cash = current_positions.get("CASH", 0.0)
@@ -253,9 +275,11 @@ def run_weekly(
 
     # ── steps 6-8: fills + state update + snapshot ─────────────────────────
     with Session(db_engine) as session:
-        fills = simulate_all_fills(orders, date_str, session, cfg.transaction_costs)
-        apply_fills_to_state(date_str, fills, current_positions, session)
-        snapshot = write_portfolio_snapshot(date_str, session, prices)
+        fills = simulate_all_fills(
+            orders, date_str, session, cfg.transaction_costs, portfolio_id=portfolio_id
+        )
+        apply_fills_to_state(date_str, fills, current_positions, session, portfolio_id=portfolio_id)
+        snapshot = write_portfolio_snapshot(date_str, session, prices, portfolio_id=portfolio_id)
 
     actual_cost_usd = sum(f["cost_usd"] for f in fills)
     summary["actual_transaction_cost_usd"] = actual_cost_usd
@@ -267,7 +291,8 @@ def run_weekly(
     summary["risk_events_triggered"] = len(triggered)
 
     logger.info(
-        "=== Rebalance complete  date=%s  orders=%d  cost=$%.2f  portfolio=$%.2f ===",
+        "=== Rebalance complete  portfolio=%s  date=%s  orders=%d  cost=$%.2f  portfolio=$%.2f ===",
+        portfolio_id,
         date_str,
         len(orders),
         actual_cost_usd,

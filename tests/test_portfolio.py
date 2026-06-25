@@ -1,4 +1,5 @@
 """Tests for src/optimizer/portfolio.py — Ticket 3.3."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -28,18 +29,21 @@ def _make_config(
     solver_fallback: str = "SCS",
 ):
     """Return a minimal OptimizerConfig for portfolio tests."""
-    from config import load_config, PortfolioConfig
+    from config import PortfolioConfig, load_config
+
     cfg = load_config("optimizer")
-    return cfg.model_copy(update={
-        "risk_aversion": risk_aversion,
-        "portfolio": PortfolioConfig(
-            max_position_weight=max_position_weight,
-            vol_target=vol_target,
-            turnover_penalty=turnover_penalty,
-            solver_primary=solver_primary,
-            solver_fallback=solver_fallback,
-        ),
-    })
+    return cfg.model_copy(
+        update={
+            "risk_aversion": risk_aversion,
+            "portfolio": PortfolioConfig(
+                max_position_weight=max_position_weight,
+                vol_target=vol_target,
+                turnover_penalty=turnover_penalty,
+                solver_primary=solver_primary,
+                solver_fallback=solver_fallback,
+            ),
+        }
+    )
 
 
 def _make_sigma(n: int = _N, seed: int = 42, scale: float = 0.04) -> np.ndarray:
@@ -121,9 +125,20 @@ class TestBehavioralChecks:
         from config import load_config
 
         # Market weights that respect max_position_weight — no sector above 25%
-        market_weights = np.array([
-            0.20, 0.15, 0.12, 0.10, 0.10, 0.09, 0.08, 0.07, 0.05, 0.04,
-        ])
+        market_weights = np.array(
+            [
+                0.20,
+                0.15,
+                0.12,
+                0.10,
+                0.10,
+                0.09,
+                0.08,
+                0.07,
+                0.05,
+                0.04,
+            ]
+        )
         assert abs(market_weights.sum() - 1.0) < 1e-9
 
         sigma = _make_sigma()
@@ -148,10 +163,11 @@ class TestBehavioralChecks:
         sigma = _make_sigma()
         # Equilibrium baseline, then spike asset 0 (represents XLK)
         from config import load_config
+
         market_weights = np.ones(_N) / _N
         pi = load_config("optimizer").risk_aversion * sigma @ market_weights
         mu = pi.copy()
-        mu[0] = 0.15   # 15% expected return — well above equilibrium ~8%
+        mu[0] = 0.15  # 15% expected return — well above equilibrium ~8%
 
         prev = np.ones(_N) / _N
         cfg = _make_config(vol_target=0.95, turnover_penalty=0.0)
@@ -198,7 +214,7 @@ class TestBehavioralChecks:
         n = 10
         # Assets 0-2: 50% annual vol; assets 3-9: 10% annual vol; no cross-correlation
         vols = np.array([0.50] * 3 + [0.10] * 7)
-        sigma = np.diag(vols ** 2)
+        sigma = np.diag(vols**2)
 
         # Only high-vol assets have alpha
         mu = np.array([0.20, 0.18, 0.16] + [0.03] * 7)
@@ -207,7 +223,9 @@ class TestBehavioralChecks:
 
         # Without vol constraint (loose target): optimizer concentrates in high-vol
         cfg_loose = _make_config(
-            vol_target=0.95, turnover_penalty=0.0, max_position_weight=0.25,
+            vol_target=0.95,
+            turnover_penalty=0.0,
+            max_position_weight=0.25,
         )
         w_loose, status_loose = optimize_weights(mu, sigma, prev, cfg_loose)
         vol_loose = float(np.sqrt(w_loose @ sigma @ w_loose))
@@ -222,13 +240,15 @@ class TestBehavioralChecks:
 
         # With vol constraint: must stay ≤ vol_target and report "binding"
         cfg_tight = _make_config(
-            vol_target=vol_target, turnover_penalty=0.0, max_position_weight=0.25,
+            vol_target=vol_target,
+            turnover_penalty=0.0,
+            max_position_weight=0.25,
         )
         w_tight, status_tight = optimize_weights(mu, sigma, prev, cfg_tight)
         vol_tight = float(np.sqrt(w_tight @ sigma @ w_tight))
 
         assert vol_tight <= vol_target + 0.001, (
-            f"Constrained vol {vol_tight:.4f} must be ≤ vol_target+0.001={vol_target+0.001}"
+            f"Constrained vol {vol_tight:.4f} must be ≤ vol_target+0.001={vol_target + 0.001}"
         )
         assert status_tight == "binding", (
             f"Vol-constrained solution should report binding, got {status_tight}"
@@ -256,7 +276,7 @@ class TestVolConstraintStatus:
         """
         n = 3
         vols = np.full(n, 0.40)
-        sigma = np.diag(vols ** 2)  # independent assets, each 40% vol
+        sigma = np.diag(vols**2)  # independent assets, each 40% vol
         # min-vol portfolio is equal-weight: vol = 40% / sqrt(3) ≈ 23.1%
         mu = np.ones(n) * 0.10
         prev = np.ones(n) / n
@@ -264,9 +284,7 @@ class TestVolConstraintStatus:
 
         weights, status = optimize_weights(mu, sigma, prev, cfg)
 
-        assert status == "infeasible_relaxed", (
-            f"Expected infeasible_relaxed; got {status}"
-        )
+        assert status == "infeasible_relaxed", f"Expected infeasible_relaxed; got {status}"
         assert abs(weights.sum() - 1.0) < 1e-6
         assert np.all(weights >= -1e-8)
         assert np.all(weights <= 0.50 + 1e-6)
@@ -281,7 +299,7 @@ class TestVolConstraintStatus:
         mu = np.array([0.20, 0.05, 0.05])
         prev = np.ones(n) / n
         cfg = _make_config(
-            vol_target=0.10,       # infeasible: min vol ≈ 23%
+            vol_target=0.10,  # infeasible: min vol ≈ 23%
             max_position_weight=0.50,
             turnover_penalty=0.0,
         )
@@ -380,7 +398,7 @@ class TestComputeExpectedMetrics:
     def test_sharpe_ratio(self) -> None:
         weights = np.array([1.0])
         mu = np.array([0.10])
-        sigma = np.array([[0.04]])   # vol = 0.20
+        sigma = np.array([[0.04]])  # vol = 0.20
         m = compute_expected_portfolio_metrics(weights, mu, sigma)
         assert m["expected_sharpe"] == pytest.approx(0.10 / 0.20, rel=1e-6)
 
@@ -408,6 +426,7 @@ class TestComputeExpectedMetrics:
 class TestPortfolioConfig:
     def test_config_loads_portfolio_stanza(self) -> None:
         from config import load_config
+
         cfg = load_config("optimizer")
         assert cfg.portfolio.max_position_weight == pytest.approx(0.25)
         assert cfg.portfolio.vol_target == pytest.approx(0.12)

@@ -14,6 +14,7 @@ surfaced explicitly in reconcile_attribution's unexplained_pct field.
 All return values are decimal fractions (0.05 = 5%), not percentages.
 Cost drag is in basis points (1 bp = 0.0001).
 """
+
 from __future__ import annotations
 
 import datetime
@@ -129,7 +130,9 @@ def compute_sector_contribution(
         except KeyError:
             logger.warning(
                 "compute_sector_contribution: missing price row for %s on %s or %s",
-                ticker, start_date, end_date,
+                ticker,
+                start_date,
+                end_date,
             )
             continue
 
@@ -169,12 +172,15 @@ def compute_cost_drag(start_date: str, end_date: str, db: Session) -> dict:
     start_obj = datetime.date.fromisoformat(start_date)
     end_obj = datetime.date.fromisoformat(end_date)
 
-    total_cost_usd: float = db.execute(
-        select(func.sum(Trade.commission)).where(
-            Trade.date >= start_obj,
-            Trade.date <= end_obj,
-        )
-    ).scalar() or 0.0
+    total_cost_usd: float = (
+        db.execute(
+            select(func.sum(Trade.commission)).where(
+                Trade.date >= start_obj,
+                Trade.date <= end_obj,
+            )
+        ).scalar()
+        or 0.0
+    )
 
     snap_start = db.execute(
         select(PortfolioSnapshot).where(PortfolioSnapshot.date == start_obj)
@@ -223,8 +229,11 @@ def reconcile_attribution(
     logger.debug(
         "reconcile: total=%.6f  sum_contrib=%.6f  cost_drag=%.4fbps  "
         "explained=%.6f  unexplained=%.6f",
-        total_return, sum_contributions, cost_drag_bps,
-        explained, unexplained_pct,
+        total_return,
+        sum_contributions,
+        cost_drag_bps,
+        explained,
+        unexplained_pct,
     )
 
     return {

@@ -6,11 +6,12 @@ Public API:
 - get_spy_sector_weights: load and normalise SPY sector weights from config.
 - get_prior: orchestrator — loads prices from DB and returns (π, Σ).
 """
+
 from __future__ import annotations
 
 import datetime
 import logging
-from typing import Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pandas as pd
@@ -56,15 +57,11 @@ def compute_covariance(
             f"({lookback_days} days of returns + 1 anchor row)."
         )
     if prices_df.isnull().values.any():
-        raise ValueError(
-            "prices_df contains NaN values; clean the data before calling."
-        )
+        raise ValueError("prices_df contains NaN values; clean the data before calling.")
     if (prices_df.values <= 0).any():
-        raise ValueError(
-            "prices_df contains non-positive prices; log-returns are undefined."
-        )
+        raise ValueError("prices_df contains non-positive prices; log-returns are undefined.")
 
-    window = prices_df.iloc[-(lookback_days + 1):]
+    window = prices_df.iloc[-(lookback_days + 1) :]
     log_returns = np.log(window.values[1:] / window.values[:-1])  # shape (T, N)
 
     if method == "ledoit_wolf":
@@ -77,8 +74,11 @@ def compute_covariance(
     vols = np.sqrt(np.diag(annual_cov))
     logger.debug(
         "compute_covariance  method=%s  lookback=%d  n=%d  vol=[%.1f%%, %.1f%%]",
-        method, lookback_days, n_assets,
-        float(vols.min() * 100), float(vols.max() * 100),
+        method,
+        lookback_days,
+        n_assets,
+        float(vols.min() * 100),
+        float(vols.max() * 100),
     )
     return annual_cov
 
@@ -131,8 +131,10 @@ def compute_equilibrium_returns(
 
     logger.info(
         "compute_equilibrium_returns  λ=%.1f  n=%d  π=[%.1f%%, %.1f%%]",
-        risk_aversion, len(tickers),
-        float(pi.min() * 100), float(pi.max() * 100),
+        risk_aversion,
+        len(tickers),
+        float(pi.min() * 100),
+        float(pi.max() * 100),
     )
     return pi
 
@@ -156,9 +158,7 @@ def get_spy_sector_weights(universe: list[str]) -> np.ndarray:
     cfg = load_config("optimizer")
     missing = [t for t in universe if t not in cfg.market_cap_weights]
     if missing:
-        raise ValueError(
-            f"market_cap_weights in optimizer.yaml is missing tickers: {missing}"
-        )
+        raise ValueError(f"market_cap_weights in optimizer.yaml is missing tickers: {missing}")
     raw_w = np.array([cfg.market_cap_weights[t] for t in universe], dtype=float)
     if raw_w.sum() <= 0:
         raise ValueError(
@@ -188,19 +188,18 @@ def get_prior(
         ValueError: Fewer than lookback_days + 1 price rows exist, any ticker is
             missing from market_cap_weights, or no price data found in the DB.
     """
-    from config import load_config
-    from db.models import Price
     from sqlalchemy import select
     from sqlalchemy.orm import Session
+
+    from config import load_config
+    from db.models import Price
 
     cfg_opt = load_config("optimizer")
     cfg_uni = load_config("universe")
     tickers = cfg_uni.ticker_list
     lookback_days = cfg_opt.prior.lookback_days
 
-    rebalance_date = (
-        datetime.date.fromisoformat(date) if isinstance(date, str) else date
-    )
+    rebalance_date = datetime.date.fromisoformat(date) if isinstance(date, str) else date
 
     with Session(db) as session:
         rows = session.execute(
@@ -226,7 +225,9 @@ def get_prior(
 
     logger.info(
         "get_prior  date=%s  lookback=%d  π=[%.1f%%, %.1f%%]",
-        rebalance_date, lookback_days,
-        float(pi.min() * 100), float(pi.max() * 100),
+        rebalance_date,
+        lookback_days,
+        float(pi.min() * 100),
+        float(pi.max() * 100),
     )
     return pi, sigma

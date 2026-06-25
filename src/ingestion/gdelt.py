@@ -25,6 +25,7 @@ Combined score = tier × 2 + min(word_count/1000, 1.0) + min(|tone|/5.0, 1.0).
 Top 50 per ticker per ISO week are kept; the rest are discarded before DB write.
 URLs are normalised (strip scheme + www.) before dedup to collapse http/https pairs.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -44,43 +45,100 @@ logger = logging.getLogger(__name__)
 _GDELT_TABLE = "gdelt-bq.gdeltv2.gkg_partitioned"
 _MIN_WORD_COUNT = 50
 _TOP_N_PER_WEEK = 50
-_TIER3_FALLBACK_THRESHOLD = 5   # use Tier 3 only if Tier 1+2 yield fewer than this
+_TIER3_FALLBACK_THRESHOLD = 5  # use Tier 3 only if Tier 1+2 yield fewer than this
 _NAMES_PATH = Path(__file__).parent.parent.parent / "config" / "ticker_company_names.yaml"
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9 &.,'\-/]+$")
 
 # Source allowlists — lowercase domain only (no scheme, no www.)
-_TIER1: frozenset[str] = frozenset({
-    "reuters.com", "bloomberg.com", "wsj.com", "ft.com", "apnews.com",
-    "nytimes.com", "washingtonpost.com", "economist.com", "barrons.com",
-})
-_TIER2: frozenset[str] = frozenset({
-    "cnbc.com", "marketwatch.com", "fool.com", "benzinga.com", "seekingalpha.com",
-    "forbes.com", "fortune.com", "businessinsider.com", "thestreet.com", "yahoo.com",
-    "morningstar.com", "marketscreener.com", "investing.com", "insidermonkey.com",
-    "techcrunch.com", "wired.com", "zdnet.com", "cnet.com", "theverge.com",
-    "technologyreview.com", "arstechnica.com", "venturebeat.com",
-    "utilitydive.com", "eenews.net", "electrek.co",
-    "foxbusiness.com", "cnn.com", "nbcnews.com", "cbsnews.com", "npr.org",
-    "theguardian.com", "abcnews.com", "bnnbloomberg.ca",
-    "oilprice.com", "pv-tech.org", "cleantechnica.com",
-    "investorplace.com", "investors.com",
-})
+_TIER1: frozenset[str] = frozenset(
+    {
+        "reuters.com",
+        "bloomberg.com",
+        "wsj.com",
+        "ft.com",
+        "apnews.com",
+        "nytimes.com",
+        "washingtonpost.com",
+        "economist.com",
+        "barrons.com",
+    }
+)
+_TIER2: frozenset[str] = frozenset(
+    {
+        "cnbc.com",
+        "marketwatch.com",
+        "fool.com",
+        "benzinga.com",
+        "seekingalpha.com",
+        "forbes.com",
+        "fortune.com",
+        "businessinsider.com",
+        "thestreet.com",
+        "yahoo.com",
+        "morningstar.com",
+        "marketscreener.com",
+        "investing.com",
+        "insidermonkey.com",
+        "techcrunch.com",
+        "wired.com",
+        "zdnet.com",
+        "cnet.com",
+        "theverge.com",
+        "technologyreview.com",
+        "arstechnica.com",
+        "venturebeat.com",
+        "utilitydive.com",
+        "eenews.net",
+        "electrek.co",
+        "foxbusiness.com",
+        "cnn.com",
+        "nbcnews.com",
+        "cbsnews.com",
+        "npr.org",
+        "theguardian.com",
+        "abcnews.com",
+        "bnnbloomberg.ca",
+        "oilprice.com",
+        "pv-tech.org",
+        "cleantechnica.com",
+        "investorplace.com",
+        "investors.com",
+    }
+)
 # Wire services excluded from GDELT backfill — press releases are noise without
 # the Themes column (which triples scan cost). Editorial sources already cover
 # market-relevant wire announcements. Wire services remain available via Finnhub
 # for the weekly live refresh.
-_WIRE: frozenset[str] = frozenset({
-    "prnewswire.com", "businesswire.com", "globenewswire.com",
-})
+_WIRE: frozenset[str] = frozenset(
+    {
+        "prnewswire.com",
+        "businesswire.com",
+        "globenewswire.com",
+    }
+)
 # Tier 3: used only as fallback when Tier 1+2 < _TIER3_FALLBACK_THRESHOLD per week
-_TIER3: frozenset[str] = frozenset({
-    "financialcontent.com", "aol.com", "msn.com", "tomshardware.com",
-    "wccftech.com", "webpronews.com", "defenseworld.net",
-    "livemint.com", "moneycontrol.com", "businesstimes.com.sg",
-    "thegazette.com", "briefingwire.com", "pr-inside.com",
-    "techradar.com", "rttnews.com", "proactiveinvestors.com",
-    "pv-magazine.com", "renewableenergyworld.com",
-})
+_TIER3: frozenset[str] = frozenset(
+    {
+        "financialcontent.com",
+        "aol.com",
+        "msn.com",
+        "tomshardware.com",
+        "wccftech.com",
+        "webpronews.com",
+        "defenseworld.net",
+        "livemint.com",
+        "moneycontrol.com",
+        "businesstimes.com.sg",
+        "thegazette.com",
+        "briefingwire.com",
+        "pr-inside.com",
+        "techradar.com",
+        "rttnews.com",
+        "proactiveinvestors.com",
+        "pv-magazine.com",
+        "renewableenergyworld.com",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -150,9 +208,7 @@ def fetch_gdelt_news(
             all_articles.append(
                 {
                     "ticker": ticker,
-                    "timestamp": datetime.datetime.combine(
-                        row.article_date, datetime.time.min
-                    ),
+                    "timestamp": datetime.datetime.combine(row.article_date, datetime.time.min),
                     "source": row.source,
                     "url": row.url,
                     "tone": row.tone if row.tone is not None else 0.0,
@@ -300,9 +356,9 @@ def _filter_and_rank(articles: list[dict]) -> list[dict]:
         if tier == 0:
             continue
         if tier == 3:
-                week = _iso_week(a["timestamp"])
-                tier3_by_week[week].append((_score(3, a["word_count"], a["tone"]), a))
-                continue
+            week = _iso_week(a["timestamp"])
+            tier3_by_week[week].append((_score(3, a["word_count"], a["tone"]), a))
+            continue
 
         tier12.append((_score(tier, a["word_count"], a["tone"]), a))
 
@@ -342,9 +398,8 @@ def _month_chunks(
         if cursor.month == 12:
             last_of_month = cursor.replace(day=31)
         else:
-            last_of_month = (
-                cursor.replace(month=cursor.month + 1, day=1)
-                - datetime.timedelta(days=1)
+            last_of_month = cursor.replace(month=cursor.month + 1, day=1) - datetime.timedelta(
+                days=1
             )
         chunk_start = max(cursor, date_from)
         chunk_end = min(last_of_month, date_to)
@@ -377,9 +432,7 @@ def _build_org_conditions(names: list[str]) -> str:
     return "(\n    " + "\n    OR ".join(conditions) + "\n  )"
 
 
-def _build_query(
-    names: list[str], month_start: datetime.date, month_end: datetime.date
-) -> str:
+def _build_query(names: list[str], month_start: datetime.date, month_end: datetime.date) -> str:
     """Return a BigQuery SQL query for one calendar month."""
     next_month_start = (
         month_end.replace(day=1).replace(month=month_end.month + 1)

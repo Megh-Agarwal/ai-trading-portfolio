@@ -12,6 +12,7 @@ Public API:
 - check_realized_vol: partially deleverage if realized vol breaches threshold.
 - run_all_risk_checks: run all checks, apply actions, log to DB.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -20,10 +21,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
-
-from db.models import PortfolioSnapshot, RiskEvent
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+from db.models import PORTFOLIO_LIVE, PortfolioSnapshot, RiskEvent
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -37,10 +38,10 @@ _SQRT_252 = np.sqrt(252.0)
 class RiskCheckResult:
     check_name: str
     passed: bool
-    value: float | None      # computed metric (e.g. drawdown, turnover)
+    value: float | None  # computed metric (e.g. drawdown, turnover)
     threshold: float | None  # limit that was compared against
     message: str
-    action: str              # "none" if passed; action description if triggered
+    action: str  # "none" if passed; action description if triggered
 
 
 # ---------------------------------------------------------------------------
@@ -56,11 +57,13 @@ def _query_snapshot_values(
     rebalance_date: datetime.date,
     lookback: int,
     db: Engine,
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> list[float]:
-    """Return total_value rows up to rebalance_date, newest-first, capped at lookback."""
+    """Return total_value rows up to rebalance_date for portfolio_id, newest-first."""
     with Session(db) as session:
         rows = session.execute(
             select(PortfolioSnapshot.total_value)
+            .where(PortfolioSnapshot.portfolio_id == portfolio_id)
             .where(PortfolioSnapshot.date <= rebalance_date)
             .order_by(PortfolioSnapshot.date.desc())
             .limit(lookback)
@@ -72,18 +75,22 @@ def _log_risk_events(
     date: datetime.date,
     results: list[RiskCheckResult],
     db: Engine,
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> None:
     with Session(db) as session:
         for r in results:
-            session.add(RiskEvent(
-                date=date,
-                check_name=r.check_name,
-                triggered=not r.passed,
-                value=r.value,
-                threshold=r.threshold,
-                action_taken=r.action,
-                message=r.message,
-            ))
+            session.add(
+                RiskEvent(
+                    portfolio_id=portfolio_id,
+                    date=date,
+                    check_name=r.check_name,
+                    triggered=not r.passed,
+                    value=r.value,
+                    threshold=r.threshold,
+                    action_taken=r.action,
+                    message=r.message,
+                )
+            )
         session.commit()
 
 
@@ -124,7 +131,7 @@ def check_max_position(
         passed=False,
         value=max_weight,
         threshold=threshold,
-        message=f"Max position {max_weight:.4f} exceeds limit {threshold:.4f}; will clip and renormalize",
+        message=f"Max position {max_weight:.4f} exceeds {threshold:.4f}; will clip and renormalize",
         action="clip_and_renorm",
     )
 
@@ -162,7 +169,9 @@ def check_max_turnover(
         passed=False,
         value=turnover,
         threshold=threshold,
-        message=f"Turnover {turnover:.4f} exceeds limit {threshold:.4f}; will blend 50/50 with previous weights",
+        message=(
+            f"Turnover {turnover:.4f} exceeds {threshold:.4f}; blending 50/50 with previous weights"
+        ),
         action="blend_50_50",
     )
 
@@ -176,6 +185,7 @@ def check_drawdown_circuit_breaker(
     date: str | datetime.date,
     db: Engine,
     config,  # OptimizerConfig
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> RiskCheckResult:
     """Halt rebalancing if rolling drawdown exceeds risk.max_drawdown_threshold.
 
@@ -187,6 +197,7 @@ def check_drawdown_circuit_breaker(
         date: Rebalancing date — query snapshots up to this date.
         db: SQLAlchemy Engine.
         config: OptimizerConfig.
+        portfolio_id: Portfolio namespace for snapshot queries.
 
     Returns:
         RiskCheckResult with action="halt_rebalance" if triggered.
@@ -196,7 +207,7 @@ def check_drawdown_circuit_breaker(
     max_dd = config.risk.max_drawdown_threshold
     threshold = -max_dd  # drawdown is negative; threshold is e.g. -0.15
 
-    values = _query_snapshot_values(rebalance_date, lookback, db)
+    values = _query_snapshot_values(rebalance_date, lookback, db, portfolio_id=portfolio_id)
 
     if len(values) < 2:
         return RiskCheckResult(
@@ -244,6 +255,7 @@ def check_realized_vol(
     date: str | datetime.date,
     db: Engine,
     config,  # OptimizerConfig
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> RiskCheckResult:
     """Trigger partial deleveraging if realized portfolio vol exceeds threshold.
 
@@ -255,6 +267,7 @@ def check_realized_vol(
         date: Rebalancing date — query snapshots up to this date.
         db: SQLAlchemy Engine.
         config: OptimizerConfig.
+        portfolio_id: Portfolio namespace for snapshot queries.
 
     Returns:
         RiskCheckResult with action="deleverage_20pct" if triggered.
@@ -263,7 +276,7 @@ def check_realized_vol(
     lookback = config.risk.drawdown_lookback_days
     vol_threshold = config.portfolio.vol_target * config.risk.vol_breach_multiplier
 
-    values = _query_snapshot_values(rebalance_date, lookback, db)
+    values = _query_snapshot_values(rebalance_date, lookback, db, portfolio_id=portfolio_id)
 
     if len(values) < 3:  # need ≥ 2 returns for std(ddof=1)
         return RiskCheckResult(
@@ -318,6 +331,7 @@ def run_all_risk_checks(
     prev_weights: np.ndarray,
     db: Engine,
     config,  # OptimizerConfig
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> tuple[np.ndarray, list[RiskCheckResult]]:
     """Run all risk checks, apply triggered actions, and log results to DB.
 
@@ -336,6 +350,7 @@ def run_all_risk_checks(
         prev_weights: Weight vector before this rebalance.
         db: SQLAlchemy Engine.
         config: OptimizerConfig.
+        portfolio_id: Portfolio namespace for snapshot reads and event writes.
 
     Returns:
         (final_weights, results) where final_weights reflects all applied actions.
@@ -343,14 +358,16 @@ def run_all_risk_checks(
     rebalance_date = _to_date(date)
 
     # Run all checks against original new_weights (collect before mutating)
-    drawdown_result = check_drawdown_circuit_breaker(rebalance_date, db, config)
-    vol_result = check_realized_vol(rebalance_date, db, config)
+    drawdown_result = check_drawdown_circuit_breaker(
+        rebalance_date, db, config, portfolio_id=portfolio_id
+    )
+    vol_result = check_realized_vol(rebalance_date, db, config, portfolio_id=portfolio_id)
     pos_result = check_max_position(new_weights, config)
     turnover_result = check_max_turnover(new_weights, prev_weights, config)
     results = [drawdown_result, vol_result, pos_result, turnover_result]
 
     # Log everything before applying actions
-    _log_risk_events(rebalance_date, results, db)
+    _log_risk_events(rebalance_date, results, db, portfolio_id=portfolio_id)
 
     # Circuit breaker: halt rebalance entirely
     if not drawdown_result.passed:

@@ -8,6 +8,7 @@ Public API:
 - generate_orders: diff target vs current, produce a list of Orders.
 - validate_orders_affordable: confirm sells cover buys given available cash.
 """
+
 from __future__ import annotations
 
 import logging
@@ -57,7 +58,9 @@ def generate_orders(
         List of Order objects, one per ticker requiring a trade.
     """
     if portfolio_value <= 0:
-        logger.warning("generate_orders called with non-positive portfolio_value=%.2f", portfolio_value)
+        logger.warning(
+            "generate_orders called with non-positive portfolio_value=%.2f", portfolio_value
+        )
         return []
 
     tickers = (set(target_weights.keys()) | set(current_positions.keys())) - {_CASH}
@@ -78,8 +81,12 @@ def generate_orders(
         delta_value = target_value - current_value
 
         if abs(delta_value) / portfolio_value < min_trade_threshold:
-            logger.debug("generate_orders: skipping %s — Δweight %.4f < threshold %.4f",
-                         ticker, abs(delta_value) / portfolio_value, min_trade_threshold)
+            logger.debug(
+                "generate_orders: skipping %s — Δweight %.4f < threshold %.4f",
+                ticker,
+                abs(delta_value) / portfolio_value,
+                min_trade_threshold,
+            )
             continue
 
         delta_shares = math.floor(abs(delta_value) / price)
@@ -93,17 +100,23 @@ def generate_orders(
         target_pct = target_weight * 100
         reason = f"target {target_pct:.1f}% vs current {current_pct:.1f}%"
 
-        orders.append(Order(
-            ticker=ticker,
-            side=side,
-            shares=delta_shares,
-            estimated_price=price,
-            estimated_value=estimated_value,
-            reason=reason,
-        ))
+        orders.append(
+            Order(
+                ticker=ticker,
+                side=side,
+                shares=delta_shares,
+                estimated_price=price,
+                estimated_value=estimated_value,
+                reason=reason,
+            )
+        )
         logger.debug(
             "generate_orders: %s %s %d shares @ %.2f (Δ$%.0f)",
-            side.upper(), ticker, delta_shares, price, delta_value,
+            side.upper(),
+            ticker,
+            delta_shares,
+            price,
+            delta_value,
         )
 
     return orders
@@ -149,7 +162,8 @@ def validate_orders_affordable(
         logger.warning(
             "validate_orders_affordable: no funds available after sell costs "
             "(cash=%.2f, net_sells=%.2f) — dropping all buy orders",
-            available_cash, gross_sells * (1.0 - cost_rate),
+            available_cash,
+            gross_sells * (1.0 - cost_rate),
         )
         return [o for o in orders if o.side == "sell"]
 
@@ -157,7 +171,9 @@ def validate_orders_affordable(
     logger.warning(
         "validate_orders_affordable: scaling buy orders by %.6f "
         "(need $%.2f incl. costs, have $%.2f after sell costs)",
-        scale, total_buy_cost, funds_available,
+        scale,
+        total_buy_cost,
+        funds_available,
     )
 
     scaled: list[Order] = []
@@ -172,13 +188,15 @@ def validate_orders_affordable(
                 o.ticker,
             )
             continue
-        scaled.append(Order(
-            ticker=o.ticker,
-            side=o.side,
-            shares=new_shares,
-            estimated_price=o.estimated_price,
-            estimated_value=new_shares * o.estimated_price,
-            reason=o.reason + f" [scaled ×{scale:.4f}]",
-        ))
+        scaled.append(
+            Order(
+                ticker=o.ticker,
+                side=o.side,
+                shares=new_shares,
+                estimated_price=o.estimated_price,
+                estimated_value=new_shares * o.estimated_price,
+                reason=o.reason + f" [scaled ×{scale:.4f}]",
+            )
+        )
 
     return scaled

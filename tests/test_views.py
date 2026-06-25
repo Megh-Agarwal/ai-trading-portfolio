@@ -1,4 +1,5 @@
 """Tests for src/aggregator/views.py — Ticket 2.5."""
+
 from __future__ import annotations
 
 import datetime
@@ -40,7 +41,7 @@ def _seed_signals(
     news_conv: float = 0.0,
     poly_signal: float = 0.0,
     poly_conf: float = 0.0,
-    macro_regime: float = 0.0,   # neutral
+    macro_regime: float = 0.0,  # neutral
     macro_conf: float = 0.0,
 ):
     """Seed uniform signals across all sectors for test simplicity."""
@@ -155,8 +156,11 @@ class TestMacroRiskOffDampening:
     def _q_no_regime(self, news_signal, news_conv, poly_signal=0.0, poly_conf=0.0):
         """Expected Q value with neutral regime (scale=0.75) for comparison."""
         weights = {"news": 0.4, "macro": 0.3, "polymarket": 0.3}
-        raw = weights["news"] * news_signal * news_conv + weights["polymarket"] * poly_signal * poly_conf
-        return raw * 0.75 * _MAX_EXCESS_RETURN_ANNUAL   # neutral scale = 0.75
+        raw = (
+            weights["news"] * news_signal * news_conv
+            + weights["polymarket"] * poly_signal * poly_conf
+        )
+        return raw * 0.75 * _MAX_EXCESS_RETURN_ANNUAL  # neutral scale = 0.75
 
     def test_risk_off_produces_smaller_q_than_neutral(self):
         db_risk_off = _make_engine()
@@ -275,8 +279,7 @@ class TestOmegaArithmetic:
     def test_omega_inversely_proportional_to_conviction(self):
         """At zero poly/macro: omega = OMEGA_BASE / (w_news * news_conv * regime_scale)."""
         news_conv = 0.8
-        macro_regime = 0.0   # scale = 0.75
-        regime_scale = 0.75
+        regime_scale = 0.75  # macro_regime=0.0 → scale = 0.75
         w_news = 0.4
         # macro_conf=0 and poly_conf=0, so agg_conviction = w_news * news_conv * scale
         expected_conviction = w_news * news_conv * regime_scale
@@ -332,15 +335,9 @@ class TestDBPersistence:
         q_original, _ = build_views(old_date, db)
 
         with Session(db) as s:
-            rows = (
-                s.execute(select(View).where(View.date == old_date))
-                .scalars()
-                .all()
-            )
+            rows = s.execute(select(View).where(View.date == old_date)).scalars().all()
         stored_q = {r.sector: r.expected_return for r in rows}
-        np.testing.assert_allclose(
-            [stored_q[sec] for sec in _SECTORS], q_original, rtol=1e-9
-        )
+        np.testing.assert_allclose([stored_q[sec] for sec in _SECTORS], q_original, rtol=1e-9)
 
     def test_views_for_two_dates_are_independent(self):
         date1 = datetime.date(2024, 1, 5)
@@ -375,7 +372,9 @@ class TestErrors:
 
         db2 = _make_engine()
         _seed_signals(db2, news_signal=0.5, news_conv=0.8)
-        q_explicit, _ = build_views(_DATE, db2, weights={"news": 0.4, "macro": 0.3, "polymarket": 0.3})
+        q_explicit, _ = build_views(
+            _DATE, db2, weights={"news": 0.4, "macro": 0.3, "polymarket": 0.3}
+        )
 
         np.testing.assert_array_equal(q_default, q_explicit)
 
@@ -384,8 +383,15 @@ class TestErrors:
         db = _make_engine()
         # Seed only the macro signal — no sentiment or events rows
         with Session(db) as s:
-            s.add(Signal(date=_DATE, agent_name="macro", target="macro_regime",
-                         signal_value=0.0, confidence=0.8))
+            s.add(
+                Signal(
+                    date=_DATE,
+                    agent_name="macro",
+                    target="macro_regime",
+                    signal_value=0.0,
+                    confidence=0.8,
+                )
+            )
             s.commit()
         q, _ = build_views(_DATE, db)
         np.testing.assert_array_equal(q, 0.0)

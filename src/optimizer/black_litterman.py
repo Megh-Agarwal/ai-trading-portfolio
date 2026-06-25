@@ -12,6 +12,7 @@ Math reference (He & Litterman 1999):
 All linear systems are solved with np.linalg.solve rather than explicit matrix
 inversion to improve numerical stability.
 """
+
 from __future__ import annotations
 
 import logging
@@ -116,8 +117,11 @@ def black_litterman_posterior(
     logger.info(
         "black_litterman_posterior  n=%d  k=%d  τ=%.3f  "
         "μ*=[%.1f%%, %.1f%%]  Σ*_diag=[%.3f%%, %.3f%%]",
-        n, k, tau,
-        float(mu_posterior.min() * 100), float(mu_posterior.max() * 100),
+        n,
+        k,
+        tau,
+        float(mu_posterior.min() * 100),
+        float(mu_posterior.max() * 100),
         float(np.sqrt(np.diag(sigma_posterior)).min() * 100),
         float(np.sqrt(np.diag(sigma_posterior)).max() * 100),
     )

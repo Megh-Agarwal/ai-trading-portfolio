@@ -2,14 +2,14 @@
 
 Ticket 2.6 — entrypoint for the weekly rebalance sequence.
 """
+
 from __future__ import annotations
 
 import datetime
 import logging
 import time
 
-from sqlalchemy import delete, func, select
-from sqlalchemy import Engine
+from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from agents.macro_agent import MacroAgent
@@ -17,7 +17,7 @@ from agents.news_agent import NewsAgent
 from agents.polymarket_agent import PolymarketAgent
 from aggregator.views import build_views
 from config import load_config
-from db.models import AgentCall, Signal
+from db.models import PORTFOLIO_LIVE, AgentCall, Signal
 
 logger = logging.getLogger(__name__)
 
@@ -41,32 +41,63 @@ def _cost_since(call_id_floor: int, db: Engine) -> float:
     """Sum cost_usd for all agent_calls rows created after `call_id_floor`."""
     with Session(db) as session:
         rows = (
-            session.execute(
-                select(AgentCall).where(AgentCall.call_id > call_id_floor)
-            )
+            session.execute(select(AgentCall).where(AgentCall.call_id > call_id_floor))
             .scalars()
             .all()
         )
     return sum(r.cost_usd or 0.0 for r in rows)
 
 
-def _write_neutral_signals(agent_name: str, date: datetime.date, db: Engine) -> None:
+def _write_neutral_signals(
+    agent_name: str,
+    date: datetime.date,
+    db: Engine,
+    portfolio_id: str = PORTFOLIO_LIVE,
+) -> None:
     """Write zero-value stub rows for a failed agent so build_views can proceed."""
     sectors = [t.ticker for t in load_config("universe").tickers]
 
     if agent_name == "sentiment":
         rows: list[Signal] = [
-            Signal(date=date, agent_name="sentiment", target=s, signal_value=0.0, confidence=0.0)
+            Signal(
+                portfolio_id=portfolio_id,
+                date=date,
+                agent_name="sentiment",
+                target=s,
+                signal_value=0.0,
+                confidence=0.0,
+            )
             for s in sectors
         ]
     elif agent_name == "macro":
         rows = [
-            Signal(date=date, agent_name="macro", target="macro_regime", signal_value=0.0, confidence=0.0),
-            Signal(date=date, agent_name="macro", target="rate_outlook", signal_value=0.0, confidence=0.0),
+            Signal(
+                portfolio_id=portfolio_id,
+                date=date,
+                agent_name="macro",
+                target="macro_regime",
+                signal_value=0.0,
+                confidence=0.0,
+            ),
+            Signal(
+                portfolio_id=portfolio_id,
+                date=date,
+                agent_name="macro",
+                target="rate_outlook",
+                signal_value=0.0,
+                confidence=0.0,
+            ),
         ]
     elif agent_name == "events":
         rows = [
-            Signal(date=date, agent_name="events", target=s, signal_value=0.0, confidence=0.0)
+            Signal(
+                portfolio_id=portfolio_id,
+                date=date,
+                agent_name="events",
+                target=s,
+                signal_value=0.0,
+                confidence=0.0,
+            )
             for s in sectors
         ]
     else:
@@ -75,12 +106,20 @@ def _write_neutral_signals(agent_name: str, date: datetime.date, db: Engine) -> 
 
     with Session(db) as session:
         session.execute(
-            delete(Signal).where(Signal.date == date).where(Signal.agent_name == agent_name)
+            delete(Signal)
+            .where(Signal.portfolio_id == portfolio_id)
+            .where(Signal.date == date)
+            .where(Signal.agent_name == agent_name)
         )
         session.add_all(rows)
         session.commit()
 
-    logger.info("Wrote neutral stubs for failed agent=%s date=%s", agent_name, date)
+    logger.info(
+        "Wrote neutral stubs for failed agent=%s date=%s portfolio=%s",
+        agent_name,
+        date,
+        portfolio_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +132,7 @@ def run_agent_pipeline(
     db: Engine,
     weights: dict[str, float] | None = None,
     mode: str = "live",
+    portfolio_id: str = PORTFOLIO_LIVE,
 ) -> dict:
     """Run all three agents then build_views in sequence for `date`.
 
@@ -108,6 +148,7 @@ def run_agent_pipeline(
         weights: Agent weights forwarded to build_views.  None → config defaults.
         mode: "live" or "backtest". Forwarded to build_views for weight selection.
               "backtest" sets polymarket weight to 0% (ADR-012).
+        portfolio_id: Portfolio namespace. Signals and views are isolated per ID.
 
     Returns:
         Summary dict with keys:
@@ -120,7 +161,7 @@ def run_agent_pipeline(
     Raises:
         RuntimeError: All three agents failed — no meaningful output is possible.
     """
-    logger.info("=== run_agent_pipeline  date=%s ===", date)
+    logger.info("=== run_agent_pipeline  date=%s  portfolio=%s ===", date, portfolio_id)
     pipeline_start = time.monotonic()
     call_id_floor = _max_call_id(db)
 
@@ -137,7 +178,7 @@ def run_agent_pipeline(
         agent = agents[name]
         t0 = time.monotonic()
         try:
-            result = agent.run(date, db)
+            result = agent.run(date, db, portfolio_id=portfolio_id)
             elapsed = (time.monotonic() - t0) * 1000
             signals_by_agent[name] = {"status": "ok", "result": result, "latency_ms": elapsed}
             logger.info("Agent %s succeeded  latency=%.0fms", name, elapsed)
@@ -146,7 +187,7 @@ def run_agent_pipeline(
             logger.error("Agent %s failed after %.0fms: %s", name, elapsed, exc, exc_info=True)
             signals_by_agent[name] = {"status": "error", "error": str(exc), "latency_ms": elapsed}
             failed.append(name)
-            _write_neutral_signals(name, date, db)
+            _write_neutral_signals(name, date, db, portfolio_id=portfolio_id)
 
     if len(failed) == len(_AGENT_ORDER):
         raise RuntimeError(
@@ -158,7 +199,7 @@ def run_agent_pipeline(
         logger.warning("%d agent(s) failed — neutral stubs written: %s", len(failed), failed)
 
     # ---- aggregator -------------------------------------------------------
-    q_arr, omega_arr = build_views(date, db, mode=mode, weights=weights)
+    q_arr, omega_arr = build_views(date, db, mode=mode, weights=weights, portfolio_id=portfolio_id)
 
     total_latency_ms = (time.monotonic() - pipeline_start) * 1000
     total_cost_usd = _cost_since(call_id_floor, db)

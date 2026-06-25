@@ -1,4 +1,5 @@
 """Tests for src/agents/pipeline.py — Ticket 2.6."""
+
 from __future__ import annotations
 
 import datetime
@@ -96,17 +97,20 @@ def _make_fake_cache(news=None, macro=None, poly=None):
 def _patch_agents(cache_fn):
     """Return context managers that inject `cache_fn` into all three agents."""
     return [
-        patch("agents.news_agent.NewsAgent.__init__",
-              lambda self, cache=None: super(type(self), self).__init__(
-                  model_string="claude-haiku-4-5-20251001",
-                  prompt_template_path=_prompt_path("news_sentiment.txt"),
-                  cache=cache_fn,
-              )),
+        patch(
+            "agents.news_agent.NewsAgent.__init__",
+            lambda self, cache=None: super(type(self), self).__init__(
+                model_string="claude-haiku-4-5-20251001",
+                prompt_template_path=_prompt_path("news_sentiment.txt"),
+                cache=cache_fn,
+            ),
+        ),
     ]
 
 
 def _prompt_path(name: str):
     from pathlib import Path
+
     return Path(__file__).parent.parent / "prompts" / name
 
 
@@ -126,6 +130,7 @@ def patched_pipeline(tmp_path):
 
     def patched_news_init(self, cache=None):
         from agents.base import BaseAgent
+
         BaseAgent.__init__(
             self,
             model_string="claude-haiku-4-5-20251001",
@@ -135,6 +140,7 @@ def patched_pipeline(tmp_path):
 
     def patched_macro_init(self, cache=None):
         from agents.base import BaseAgent
+
         BaseAgent.__init__(
             self,
             model_string="claude-sonnet-4-6",
@@ -144,7 +150,7 @@ def patched_pipeline(tmp_path):
 
     def patched_poly_init(self, cache=None):
         from agents.base import BaseAgent
-        from ingestion.polymarket import load_curated_markets
+
         BaseAgent.__init__(
             self,
             model_string="claude-haiku-4-5-20251001",
@@ -167,18 +173,18 @@ def _run_pipeline_patched(date, db, cache):
     Patches prepare_input on each agent to return minimal valid dicts and
     injects `cache` so no real API calls happen.
     """
-    news_input = {
+    _news_input = {
         "analysis_date": date.isoformat(),
         "week_start": (date - datetime.timedelta(days=7)).isoformat(),
         "sectors": {s: [] for s in _SECTORS},
     }
-    macro_input = {
+    _macro_input = {
         "analysis_date": date.isoformat(),
         "series_30d": {},
         "derived_features": {},
         "news_digest": {"XLF": [], "XLI": []},
     }
-    poly_input = {
+    _poly_input = {
         "analysis_date": date.isoformat(),
         "markets": [],
     }
@@ -208,10 +214,42 @@ def _run_pipeline_patched(date, db, cache):
         # Seed signals that build_views needs (agents are mocked so they won't write)
         with Session(db) as s:
             for sector in _SECTORS:
-                s.add(Signal(date=date, agent_name="sentiment", target=sector, signal_value=0.2, confidence=0.7))
-                s.add(Signal(date=date, agent_name="events", target=sector, signal_value=0.1, confidence=0.65))
-            s.add(Signal(date=date, agent_name="macro", target="macro_regime", signal_value=1.0, confidence=0.8))
-            s.add(Signal(date=date, agent_name="macro", target="rate_outlook", signal_value=0.0, confidence=0.8))
+                s.add(
+                    Signal(
+                        date=date,
+                        agent_name="sentiment",
+                        target=sector,
+                        signal_value=0.2,
+                        confidence=0.7,
+                    )
+                )
+                s.add(
+                    Signal(
+                        date=date,
+                        agent_name="events",
+                        target=sector,
+                        signal_value=0.1,
+                        confidence=0.65,
+                    )
+                )
+            s.add(
+                Signal(
+                    date=date,
+                    agent_name="macro",
+                    target="macro_regime",
+                    signal_value=1.0,
+                    confidence=0.8,
+                )
+            )
+            s.add(
+                Signal(
+                    date=date,
+                    agent_name="macro",
+                    target="rate_outlook",
+                    signal_value=0.0,
+                    confidence=0.8,
+                )
+            )
             s.commit()
 
         return run_agent_pipeline(date, db)
@@ -225,7 +263,13 @@ def _run_pipeline_patched(date, db, cache):
 class TestReturnStructure:
     def test_returns_dict_with_required_keys(self):
         result = _run_pipeline_patched(_DATE, _make_engine(), None)
-        assert {"date", "signals_by_agent", "views", "total_cost_usd", "total_latency_ms"} <= result.keys()
+        assert {
+            "date",
+            "signals_by_agent",
+            "views",
+            "total_cost_usd",
+            "total_latency_ms",
+        } <= result.keys()
 
     def test_date_is_iso_string(self):
         result = _run_pipeline_patched(_DATE, _make_engine(), None)
@@ -279,20 +323,62 @@ class TestCostTracking:
         db = _make_engine()
         # Pre-existing row (should NOT be counted)
         with Session(db) as s:
-            s.add(AgentCall(
-                timestamp=datetime.datetime.utcnow(), agent_name="old", model_string="x",
-                prompt_hash="a", input_hash="b", response_json="{}", tokens_in=0,
-                tokens_out=0, cost_usd=0.99, latency_ms=0.0, cached=False,
-            ))
+            s.add(
+                AgentCall(
+                    timestamp=datetime.datetime.utcnow(),
+                    agent_name="old",
+                    model_string="x",
+                    prompt_hash="a",
+                    input_hash="b",
+                    response_json="{}",
+                    tokens_in=0,
+                    tokens_out=0,
+                    cost_usd=0.99,
+                    latency_ms=0.0,
+                    cached=False,
+                )
+            )
             s.commit()
 
         # Seed signals so build_views works
         with Session(db) as s:
             for sector in _SECTORS:
-                s.add(Signal(date=_DATE, agent_name="sentiment", target=sector, signal_value=0.0, confidence=0.0))
-                s.add(Signal(date=_DATE, agent_name="events", target=sector, signal_value=0.0, confidence=0.0))
-            s.add(Signal(date=_DATE, agent_name="macro", target="macro_regime", signal_value=0.0, confidence=0.0))
-            s.add(Signal(date=_DATE, agent_name="macro", target="rate_outlook", signal_value=0.0, confidence=0.0))
+                s.add(
+                    Signal(
+                        date=_DATE,
+                        agent_name="sentiment",
+                        target=sector,
+                        signal_value=0.0,
+                        confidence=0.0,
+                    )
+                )
+                s.add(
+                    Signal(
+                        date=_DATE,
+                        agent_name="events",
+                        target=sector,
+                        signal_value=0.0,
+                        confidence=0.0,
+                    )
+                )
+            s.add(
+                Signal(
+                    date=_DATE,
+                    agent_name="macro",
+                    target="macro_regime",
+                    signal_value=0.0,
+                    confidence=0.0,
+                )
+            )
+            s.add(
+                Signal(
+                    date=_DATE,
+                    agent_name="macro",
+                    target="rate_outlook",
+                    signal_value=0.0,
+                    confidence=0.0,
+                )
+            )
             s.commit()
 
         # New rows added AFTER the floor
@@ -301,14 +387,24 @@ class TestCostTracking:
             patch("agents.pipeline.MacroAgent") as MockMacro,
             patch("agents.pipeline.PolymarketAgent") as MockPoly,
         ):
-            def side_effect_run(date, db_engine):
+
+            def side_effect_run(date, db_engine, portfolio_id="live"):
                 with Session(db_engine) as s:
-                    s.add(AgentCall(
-                        timestamp=datetime.datetime.utcnow(), agent_name="sentiment",
-                        model_string="x", prompt_hash="a", input_hash="b",
-                        response_json="{}", tokens_in=0, tokens_out=0,
-                        cost_usd=0.00012, latency_ms=100.0, cached=False,
-                    ))
+                    s.add(
+                        AgentCall(
+                            timestamp=datetime.datetime.utcnow(),
+                            agent_name="sentiment",
+                            model_string="x",
+                            prompt_hash="a",
+                            input_hash="b",
+                            response_json="{}",
+                            tokens_in=0,
+                            tokens_out=0,
+                            cost_usd=0.00012,
+                            latency_ms=100.0,
+                            cached=False,
+                        )
+                    )
                     s.commit()
                 return _VALID_NEWS
 
@@ -346,17 +442,45 @@ class TestPartialFailure:
             for a in surviving:
                 if a == "sentiment":
                     for sec in _SECTORS:
-                        s.add(Signal(date=_DATE, agent_name="sentiment", target=sec,
-                                     signal_value=0.2, confidence=0.7))
+                        s.add(
+                            Signal(
+                                date=_DATE,
+                                agent_name="sentiment",
+                                target=sec,
+                                signal_value=0.2,
+                                confidence=0.7,
+                            )
+                        )
                 elif a == "macro":
-                    s.add(Signal(date=_DATE, agent_name="macro", target="macro_regime",
-                                 signal_value=0.0, confidence=0.8))
-                    s.add(Signal(date=_DATE, agent_name="macro", target="rate_outlook",
-                                 signal_value=0.0, confidence=0.8))
+                    s.add(
+                        Signal(
+                            date=_DATE,
+                            agent_name="macro",
+                            target="macro_regime",
+                            signal_value=0.0,
+                            confidence=0.8,
+                        )
+                    )
+                    s.add(
+                        Signal(
+                            date=_DATE,
+                            agent_name="macro",
+                            target="rate_outlook",
+                            signal_value=0.0,
+                            confidence=0.8,
+                        )
+                    )
                 elif a == "events":
                     for sec in _SECTORS:
-                        s.add(Signal(date=_DATE, agent_name="events", target=sec,
-                                     signal_value=0.0, confidence=0.6))
+                        s.add(
+                            Signal(
+                                date=_DATE,
+                                agent_name="events",
+                                target=sec,
+                                signal_value=0.0,
+                                confidence=0.6,
+                            )
+                        )
             s.commit()
 
         with (
@@ -371,11 +495,19 @@ class TestPartialFailure:
             poly_inst = MagicMock()
             poly_inst.agent_name = "events"
 
-            for inst, name in [(news_inst, "sentiment"), (macro_inst, "macro"), (poly_inst, "events")]:
+            for inst, name in [
+                (news_inst, "sentiment"),
+                (macro_inst, "macro"),
+                (poly_inst, "events"),
+            ]:
                 if name == failing_agent:
                     inst.run.side_effect = RuntimeError(f"Simulated {name} failure")
                 else:
-                    results = {"sentiment": _VALID_NEWS, "macro": _VALID_MACRO, "events": _VALID_POLY}
+                    results = {
+                        "sentiment": _VALID_NEWS,
+                        "macro": _VALID_MACRO,
+                        "events": _VALID_POLY,
+                    }
                     inst.run.return_value = results[name]
 
             MockNews.return_value = news_inst
@@ -426,9 +558,7 @@ class TestPartialFailure:
         with Session(db) as s:
             rows = (
                 s.execute(
-                    select(Signal)
-                    .where(Signal.date == _DATE)
-                    .where(Signal.agent_name == "macro")
+                    select(Signal).where(Signal.date == _DATE).where(Signal.agent_name == "macro")
                 )
                 .scalars()
                 .all()
@@ -501,18 +631,14 @@ class TestWriteNeutralSignals:
         db = _make_engine()
         _write_neutral_signals("sentiment", _DATE, db)
         with Session(db) as s:
-            rows = s.execute(
-                select(Signal).where(Signal.agent_name == "sentiment")
-            ).scalars().all()
+            rows = s.execute(select(Signal).where(Signal.agent_name == "sentiment")).scalars().all()
         assert len(rows) == len(_SECTORS)
 
     def test_writes_2_rows_for_macro(self):
         db = _make_engine()
         _write_neutral_signals("macro", _DATE, db)
         with Session(db) as s:
-            rows = s.execute(
-                select(Signal).where(Signal.agent_name == "macro")
-            ).scalars().all()
+            rows = s.execute(select(Signal).where(Signal.agent_name == "macro")).scalars().all()
         assert len(rows) == 2
         targets = {r.target for r in rows}
         assert targets == {"macro_regime", "rate_outlook"}
@@ -521,9 +647,7 @@ class TestWriteNeutralSignals:
         db = _make_engine()
         _write_neutral_signals("events", _DATE, db)
         with Session(db) as s:
-            rows = s.execute(
-                select(Signal).where(Signal.agent_name == "events")
-            ).scalars().all()
+            rows = s.execute(select(Signal).where(Signal.agent_name == "events")).scalars().all()
         assert len(rows) == len(_SECTORS)
 
     def test_stubs_are_idempotent(self):
@@ -531,9 +655,9 @@ class TestWriteNeutralSignals:
         _write_neutral_signals("sentiment", _DATE, db)
         _write_neutral_signals("sentiment", _DATE, db)
         with Session(db) as s:
-            count = len(s.execute(
-                select(Signal).where(Signal.agent_name == "sentiment")
-            ).scalars().all())
+            count = len(
+                s.execute(select(Signal).where(Signal.agent_name == "sentiment")).scalars().all()
+            )
         assert count == len(_SECTORS)
 
     def test_stubs_all_have_zero_signal_and_confidence(self):

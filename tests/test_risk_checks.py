@@ -1,4 +1,5 @@
 """Tests for src/optimizer/risk_checks.py — Ticket 3.5."""
+
 from __future__ import annotations
 
 import datetime
@@ -85,13 +86,15 @@ def _insert_snapshots(db, start: datetime.date, values: list[float]) -> None:
     """Insert PortfolioSnapshot rows on consecutive calendar days."""
     with Session(db) as session:
         for i, v in enumerate(values):
-            session.add(PortfolioSnapshot(
-                date=start + datetime.timedelta(days=i),
-                total_value=v,
-                cash=0.0,
-                gross_exposure=1.0,
-                net_exposure=1.0,
-            ))
+            session.add(
+                PortfolioSnapshot(
+                    date=start + datetime.timedelta(days=i),
+                    total_value=v,
+                    cash=0.0,
+                    gross_exposure=1.0,
+                    net_exposure=1.0,
+                )
+            )
         session.commit()
 
 
@@ -378,9 +381,7 @@ class TestRunAllRiskChecks:
         old = new = np.ones(_N) / _N
         run_all_risk_checks(_DATE, new, old, db, _make_config())
         with Session(db) as session:
-            count = session.execute(
-                select(func.count()).select_from(RiskEvent)
-            ).scalar()
+            count = session.execute(select(func.count()).select_from(RiskEvent)).scalar()
         assert count == 4
 
     def test_triggered_check_logged_with_triggered_true(self, db):
@@ -388,9 +389,13 @@ class TestRunAllRiskChecks:
         old = new = np.ones(_N) / _N
         run_all_risk_checks(_DATE, new, old, db, _make_config())
         with Session(db) as session:
-            events = session.execute(
-                select(RiskEvent).where(RiskEvent.triggered == True)  # noqa: E712
-            ).scalars().all()
+            events = (
+                session.execute(
+                    select(RiskEvent).where(RiskEvent.triggered == True)  # noqa: E712
+                )
+                .scalars()
+                .all()
+            )
         assert any(e.check_name == "drawdown_circuit_breaker" for e in events)
 
     def test_passing_check_logged_with_triggered_false(self, db):
@@ -398,9 +403,13 @@ class TestRunAllRiskChecks:
         old = new = np.ones(_N) / _N
         run_all_risk_checks(_DATE, new, old, db, _make_config())
         with Session(db) as session:
-            events = session.execute(
-                select(RiskEvent).where(RiskEvent.triggered == False)  # noqa: E712
-            ).scalars().all()
+            events = (
+                session.execute(
+                    select(RiskEvent).where(RiskEvent.triggered == False)  # noqa: E712
+                )
+                .scalars()
+                .all()
+            )
         assert len(events) == 4  # all checks passed → all logged as not triggered
 
     def test_multiple_checks_trigger_simultaneously_drawdown_takes_priority(self, db):
@@ -418,9 +427,13 @@ class TestRunAllRiskChecks:
         assert not turnover_r.passed
         # Both logged to DB
         with Session(db) as session:
-            triggered = session.execute(
-                select(RiskEvent).where(RiskEvent.triggered == True)  # noqa: E712
-            ).scalars().all()
+            triggered = (
+                session.execute(
+                    select(RiskEvent).where(RiskEvent.triggered == True)  # noqa: E712
+                )
+                .scalars()
+                .all()
+            )
         triggered_names = {e.check_name for e in triggered}
         assert "drawdown_circuit_breaker" in triggered_names
         assert "max_turnover" in triggered_names
@@ -451,6 +464,7 @@ class TestRunAllRiskChecks:
 class TestRiskConfig:
     def test_risk_config_loads_from_optimizer_yaml(self):
         from config import load_config
+
         cfg = load_config("optimizer")
         r = cfg.risk
         assert r.max_single_rebalance_turnover == pytest.approx(0.50)
@@ -461,20 +475,28 @@ class TestRiskConfig:
 
     def test_vol_threshold_derived_from_config(self):
         from config import load_config
+
         cfg = load_config("optimizer")
         expected = cfg.portfolio.vol_target * cfg.risk.vol_breach_multiplier
         assert expected == pytest.approx(0.12 * 1.50)
 
     def test_invalid_vol_deleveraging_blend_raises(self, tmp_path, monkeypatch):
         import yaml
+
         from config import load_config
+
         data = {
-            "tau": 0.05, "risk_aversion": 2.5,
-            "max_position_weight": 0.25, "vol_target": 0.12,
-            "turnover_penalty": 0.1, "transaction_cost_bps": 10,
+            "tau": 0.05,
+            "risk_aversion": 2.5,
+            "max_position_weight": 0.25,
+            "vol_target": 0.12,
+            "turnover_penalty": 0.1,
+            "transaction_cost_bps": 10,
             "aggregator": {
-                "max_excess_return_annual": 0.05, "omega_base": 0.0001,
-                "regime_scale_intercept": 0.75, "regime_scale_slope": 0.25,
+                "max_excess_return_annual": 0.05,
+                "omega_base": 0.0001,
+                "regime_scale_intercept": 0.75,
+                "regime_scale_slope": 0.25,
             },
             "aggregator_weights": {
                 "backtest": {"news": 0.57, "macro": 0.43, "polymarket": 0.00},
@@ -483,10 +505,17 @@ class TestRiskConfig:
             "market_cap_weights": {"XLK": 0.30, "XLF": 0.10, "XLV": 0.10},
             "prior": {"lookback_days": 252},
             "black_litterman": {"tau": 0.05},
-            "transaction_costs": {"spread_bps": 1.0, "slippage_bps": 2.0, "min_trade_threshold": 0.001},
+            "transaction_costs": {
+                "spread_bps": 1.0,
+                "slippage_bps": 2.0,
+                "min_trade_threshold": 0.001,
+            },
             "portfolio": {
-                "max_position_weight": 0.25, "vol_target": 0.12,
-                "turnover_penalty": 0.10, "solver_primary": "CLARABEL", "solver_fallback": "SCS",
+                "max_position_weight": 0.25,
+                "vol_target": 0.12,
+                "turnover_penalty": 0.10,
+                "solver_primary": "CLARABEL",
+                "solver_fallback": "SCS",
             },
             "risk": {
                 "max_single_rebalance_turnover": 0.50,
@@ -499,5 +528,6 @@ class TestRiskConfig:
         (tmp_path / "optimizer.yaml").write_text(yaml.dump(data))
         monkeypatch.setattr("config._CONFIG_DIR", tmp_path)
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             load_config("optimizer")

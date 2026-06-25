@@ -6,6 +6,7 @@ Design:
 - Every call (hit or miss) is logged to the agent_calls table when an engine is supplied.
 - Cache hits have tokens_in=0, tokens_out=0, cost_usd=0.0 — no API tokens consumed.
 """
+
 from __future__ import annotations
 
 import datetime

@@ -81,17 +81,28 @@ def test_optimizer_max_position_weight_above_one_raises(tmp_path, monkeypatch):
 
 
 def test_backtest_end_before_start_raises(tmp_path, monkeypatch):
-    bad = {"start_date": "2024-06-01", "end_date": "2023-01-01",
-           "initial_capital": 1_000_000, "rebalance_frequency": "weekly"}
+    bad = {
+        "start_date": "2024-06-01",
+        "end_date": "2023-01-01",
+        "initial_capital": 1_000_000,
+        "rebalance_frequency": "weekly",
+    }
     _write_and_patch(tmp_path, monkeypatch, "backtest", bad)
     with pytest.raises(ValidationError, match="end_date"):
         load_config("backtest")
 
 
 def test_agent_negative_temperature_raises(tmp_path, monkeypatch):
-    bad = {"agents": {"sentiment": {"model": "claude-haiku-4-5-20251001",
-                                    "prompt_template": "prompts/sentiment.txt",
-                                    "max_tokens": 512, "temperature": -0.5}}}
+    bad = {
+        "agents": {
+            "sentiment": {
+                "model": "claude-haiku-4-5-20251001",
+                "prompt_template": "prompts/sentiment.txt",
+                "max_tokens": 512,
+                "temperature": -0.5,
+            }
+        }
+    }
     _write_and_patch(tmp_path, monkeypatch, "agents", bad)
     with pytest.raises(ValidationError, match="temperature"):
         load_config("agents")
@@ -172,8 +183,12 @@ def _write_and_patch(tmp_path: Path, monkeypatch, name: str, data: dict) -> None
 def _optimizer_data(**overrides) -> dict:
     """Return a minimal valid optimizer config dict with optional field overrides."""
     base = {
-        "tau": 0.05, "risk_aversion": 2.5, "max_position_weight": 0.25,
-        "vol_target": 0.12, "turnover_penalty": 0.1, "transaction_cost_bps": 10,
+        "tau": 0.05,
+        "risk_aversion": 2.5,
+        "max_position_weight": 0.25,
+        "vol_target": 0.12,
+        "turnover_penalty": 0.1,
+        "transaction_cost_bps": 10,
         **_OPTIMIZER_AGGREGATOR,
     }
     base.update(overrides)

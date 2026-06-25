@@ -1,10 +1,10 @@
 """Tests for src/execution/orders.py — Ticket 4.2."""
+
 from __future__ import annotations
 
 import pytest
 
 from execution.orders import Order, generate_orders, validate_orders_affordable
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -156,7 +156,7 @@ class TestRoundsDownNeverUp:
     def test_zero_shares_after_floor_is_skipped(self) -> None:
         """If floor(delta_value / price) == 0 the ticker is skipped entirely."""
         # delta_value ≈ $50 (0.5% of 10k), price = $200 → floor(50/200) = 0
-        orders = generate_orders(
+        generate_orders(
             target_weights=_weights(XLK=0.105),
             current_positions=_positions(CASH=9_000.0, XLK=50.0),
             portfolio_value=10_000.0,
@@ -192,10 +192,10 @@ class TestAffordabilityCheckCatchesInfeasibleSet:
         buys = [o for o in result if o.side == "buy"]
         sells = [o for o in result if o.side == "sell"]
         assert len(buys) == 1
-        assert buys[0].shares < 100          # scaled down
-        assert buys[0].shares == 62          # floor(100 × 0.625) = 62
+        assert buys[0].shares < 100  # scaled down
+        assert buys[0].shares == 62  # floor(100 × 0.625) = 62
         assert buys[0].estimated_value == pytest.approx(62 * 200.0)
-        assert sells[0].shares == 50         # sell unchanged
+        assert sells[0].shares == 50  # sell unchanged
 
     def test_affordability_passes_when_sells_cover_buys(self) -> None:
         """Sell proceeds bridge the gap → orders returned unchanged."""
@@ -206,7 +206,7 @@ class TestAffordabilityCheckCatchesInfeasibleSet:
         # available = 6_000 + 15_000 = 21_000 >= 20_000 → no scaling
         result = validate_orders_affordable(orders, available_cash=6_000.0)
         buys = [o for o in result if o.side == "buy"]
-        assert buys[0].shares == 100         # unchanged
+        assert buys[0].shares == 100  # unchanged
 
     def test_affordability_with_no_orders(self) -> None:
         assert validate_orders_affordable([], available_cash=0.0) == []
@@ -223,7 +223,7 @@ class TestAffordabilityCheckCatchesInfeasibleSet:
     def test_affordability_sells_only_always_passes(self) -> None:
         orders = [Order("XLK", "sell", 50, 100.0, 5_000.0, "test")]
         result = validate_orders_affordable(orders, available_cash=0.0)
-        assert result[0].shares == 50        # sell unchanged
+        assert result[0].shares == 50  # sell unchanged
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +274,7 @@ class TestAffordabilityScaleDownWithCosts:
         )
         buys = [o for o in result if o.side == "buy"]
         assert len(buys) == 1
-        assert buys[0].shares < 19_980      # scaled down
+        assert buys[0].shares < 19_980  # scaled down
 
     def test_sell_order_is_unchanged_after_scaling(self) -> None:
         """Sell orders must never be modified."""
@@ -295,22 +295,21 @@ class TestAffordabilityScaleDownWithCosts:
         gross_buys = sum(o.estimated_value for o in buys)
         funds = 1_000.0 + gross_sells * (1.0 - self._COST_RATE)
         required = gross_buys * (1.0 + self._COST_RATE)
-        assert required <= funds + 1e-6     # small tolerance for float arithmetic
+        assert required <= funds + 1e-6  # small tolerance for float arithmetic
 
     def test_no_negative_cash_after_fill_simulation(self) -> None:
         """The fill simulator must not raise NegativeCashError on scaled orders."""
-        from execution.fill_simulator import apply_fills_to_state, simulate_all_fills
-        from config import TransactionCostsConfig
-        from db.models import Base
         from sqlalchemy import create_engine
         from sqlalchemy.orm import Session
+
+        from config import TransactionCostsConfig
+        from db.models import Base
+        from execution.fill_simulator import apply_fills_to_state, simulate_all_fills
 
         orders = validate_orders_affordable(
             self._make_orders(), available_cash=1_000.0, cost_rate=self._COST_RATE
         )
-        tc_cfg = TransactionCostsConfig(
-            spread_bps=5.0, slippage_bps=5.0, min_trade_threshold=0.001
-        )
+        tc_cfg = TransactionCostsConfig(spread_bps=5.0, slippage_bps=5.0, min_trade_threshold=0.001)
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(engine)
         current_positions = {"CASH": 1_000.0, "XLK": 9_990.0}

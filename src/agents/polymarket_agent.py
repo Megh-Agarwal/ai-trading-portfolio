@@ -1,18 +1,18 @@
 """Polymarket events agent — Agent 3 of 3."""
+
 from __future__ import annotations
 
 import datetime
 import logging
 from pathlib import Path
 
-from sqlalchemy import delete, func, select
-from sqlalchemy import Engine
+from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from agents.base import BaseAgent
 from agents.schemas import PolymarketSignal
 from config import load_config
-from db.models import PolymarketRaw, Signal
+from db.models import PORTFOLIO_LIVE, PolymarketRaw, Signal
 from ingestion.polymarket import load_curated_markets
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ _TOOL: dict = {
             },
             "implied_probs": {
                 "type": "object",
-                "description": "Market ID to current implied probability. Copy directly from input, do not modify.",
+                "description": "Market ID to current implied probability. Copy directly from input, do not modify.",  # noqa: E501
                 "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1},
             },
             "sector_tilts": {
@@ -57,7 +57,7 @@ _TOOL: dict = {
             },
             "driving_events": {
                 "type": "array",
-                "description": "Only sectors with |tilt| >= 0.05. List which market questions drove the tilt and why.",
+                "description": "Only sectors with |tilt| >= 0.05. List which market questions drove the tilt and why.",  # noqa: E501
                 "items": {
                     "type": "object",
                     "properties": {
@@ -78,7 +78,14 @@ _TOOL: dict = {
                 "maximum": 1,
             },
         },
-        "required": ["judgments", "implied_probs", "sector_tilts", "driving_events", "time_horizon", "overall_confidence"],
+        "required": [
+            "judgments",
+            "implied_probs",
+            "sector_tilts",
+            "driving_events",
+            "time_horizon",
+            "overall_confidence",
+        ],
     },
 }
 
@@ -111,7 +118,9 @@ class PolymarketAgent(BaseAgent):
     def prepare_input(self, date: datetime.date, db: Engine) -> dict:
         """Build structured Polymarket input for the LLM."""
         date_dt = datetime.datetime.combine(date, datetime.time.max)
-        start_30d_dt = datetime.datetime.combine(date - datetime.timedelta(days=_LOOKBACK_DAYS), datetime.time.min)
+        start_30d_dt = datetime.datetime.combine(
+            date - datetime.timedelta(days=_LOOKBACK_DAYS), datetime.time.min
+        )
 
         curated_by_id = {m["market_id"]: m for m in self._curated}
         market_ids = list(curated_by_id.keys())
@@ -208,11 +217,13 @@ class PolymarketAgent(BaseAgent):
         validated: dict,
         call_id: int | None,
         db: Engine,
+        portfolio_id: str = PORTFOLIO_LIVE,
     ) -> None:
         """Write one Signal row per sector; idempotent."""
         confidence = validated["overall_confidence"]
         rows = [
             Signal(
+                portfolio_id=portfolio_id,
                 date=date,
                 agent_name=self.agent_name,
                 target=sector,
@@ -226,6 +237,7 @@ class PolymarketAgent(BaseAgent):
         with Session(db) as session:
             session.execute(
                 delete(Signal)
+                .where(Signal.portfolio_id == portfolio_id)
                 .where(Signal.date == date)
                 .where(Signal.agent_name == self.agent_name)
             )

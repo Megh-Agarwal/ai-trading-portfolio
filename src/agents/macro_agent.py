@@ -1,4 +1,5 @@
 """Macro regime agent — Agent 2 of 3."""
+
 from __future__ import annotations
 
 import datetime
@@ -6,14 +7,13 @@ import logging
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import delete, select
-from sqlalchemy import Engine
+from sqlalchemy import Engine, delete, select
 from sqlalchemy.orm import Session
 
-from agents.base import BaseAgent, _REGIME_TO_FLOAT, _RATE_OUTLOOK_TO_FLOAT
+from agents.base import _RATE_OUTLOOK_TO_FLOAT, _REGIME_TO_FLOAT, BaseAgent
 from agents.schemas import MacroRegimeSignal
 from config import load_config
-from db.models import Macro, NewsRaw, Signal
+from db.models import PORTFOLIO_LIVE, Macro, NewsRaw, Signal
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,10 @@ class MacroAgent(BaseAgent):
                 session.execute(
                     select(NewsRaw)
                     .where(NewsRaw.sector.in_(["XLF", "XLI"]))
-                    .where(NewsRaw.timestamp >= datetime.datetime.combine(news_start, datetime.time.min))
+                    .where(
+                        NewsRaw.timestamp
+                        >= datetime.datetime.combine(news_start, datetime.time.min)
+                    )
                     .where(NewsRaw.timestamp <= datetime.datetime.combine(date, datetime.time.max))
                     .order_by(NewsRaw.timestamp.desc())
                     .limit(_MAX_NEWS_ARTICLES * 2)
@@ -157,11 +160,13 @@ class MacroAgent(BaseAgent):
         validated: dict,
         call_id: int | None,
         db: Engine,
+        portfolio_id: str = PORTFOLIO_LIVE,
     ) -> None:
         """Write two Signal rows (macro_regime + rate_outlook); idempotent."""
         confidence = validated["confidence"]
         rows = [
             Signal(
+                portfolio_id=portfolio_id,
                 date=date,
                 agent_name=self.agent_name,
                 target="macro_regime",
@@ -170,6 +175,7 @@ class MacroAgent(BaseAgent):
                 raw_call_id=call_id,
             ),
             Signal(
+                portfolio_id=portfolio_id,
                 date=date,
                 agent_name=self.agent_name,
                 target="rate_outlook",
@@ -182,6 +188,7 @@ class MacroAgent(BaseAgent):
         with Session(db) as session:
             session.execute(
                 delete(Signal)
+                .where(Signal.portfolio_id == portfolio_id)
                 .where(Signal.date == date)
                 .where(Signal.agent_name == self.agent_name)
             )
