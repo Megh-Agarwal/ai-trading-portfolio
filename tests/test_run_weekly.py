@@ -23,6 +23,7 @@ from config import load_config
 from db.models import (
     PORTFOLIO_BACKTEST_EQUAL_WEIGHT,
     PORTFOLIO_BACKTEST_NO_LLM,
+    PORTFOLIO_BACKTEST_SPY,
     Base,
     PortfolioSnapshot,
     Position,
@@ -55,6 +56,7 @@ _FAKE_PRICES = {
     "XLB": 90.0,
     "XLRE": 40.0,
     "XLU": 65.0,
+    "SPY": 500.0,  # SPY benchmark — Ticket 5.3
 }
 
 
@@ -367,7 +369,7 @@ class TestAlreadyExecuted:
 class TestFetchPricesForDate:
     def test_returns_prices_for_seeded_tickers(self, db_engine) -> None:
         prices = _fetch_prices_for_date(_DATE_OBJ, _TICKERS, db_engine)
-        for ticker in _FAKE_PRICES:
+        for ticker in _TICKERS:  # only ETFs; SPY is benchmark and not in _TICKERS
             assert prices[ticker] == pytest.approx(_FAKE_PRICES[ticker])
 
     def test_returns_empty_when_no_prices(self) -> None:
@@ -527,6 +529,62 @@ class TestEqualWeightBaseline:
 
     def test_does_not_write_to_live_portfolio(self, db_engine) -> None:
         run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_EQUAL_WEIGHT)
+        with Session(db_engine) as session:
+            count = session.execute(
+                select(func.count())
+                .select_from(Position)
+                .where(Position.portfolio_id == "live")
+                .where(Position.date == _DATE_OBJ)
+            ).scalar()
+        assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# SPY benchmark dispatch tests — Ticket 5.3
+# ---------------------------------------------------------------------------
+
+
+class TestSpyBenchmark:
+    """run_weekly dispatches to run_spy_benchmark for PORTFOLIO_BACKTEST_SPY."""
+
+    def test_agent_pipeline_not_called(self, db_engine) -> None:
+        with patch("weekly_run.run_agent_pipeline") as mock_agent:
+            run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_SPY)
+            mock_agent.assert_not_called()
+
+    def test_optimization_pipeline_not_called(self, db_engine) -> None:
+        with patch("weekly_run.run_optimization_pipeline") as mock_opt:
+            run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_SPY)
+            mock_opt.assert_not_called()
+
+    def test_spy_position_written_after_first_run(self, db_engine) -> None:
+        run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_SPY)
+        with Session(db_engine) as session:
+            count = session.execute(
+                select(func.count())
+                .select_from(Position)
+                .where(Position.portfolio_id == PORTFOLIO_BACKTEST_SPY)
+                .where(Position.date == _DATE_OBJ)
+            ).scalar()
+        assert count > 0
+
+    def test_one_trade_written_on_first_run(self, db_engine) -> None:
+        run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_SPY)
+        with Session(db_engine) as session:
+            count = session.execute(
+                select(func.count())
+                .select_from(Trade)
+                .where(Trade.portfolio_id == PORTFOLIO_BACKTEST_SPY)
+                .where(Trade.date == _DATE_OBJ)
+            ).scalar()
+        assert count == 1
+
+    def test_llm_cost_is_zero(self, db_engine) -> None:
+        result = run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_SPY)
+        assert result["llm_cost_usd"] == pytest.approx(0.0)
+
+    def test_does_not_write_to_live_portfolio(self, db_engine) -> None:
+        run_weekly(_DATE, "backtest", db_engine, portfolio_id=PORTFOLIO_BACKTEST_SPY)
         with Session(db_engine) as session:
             count = session.execute(
                 select(func.count())

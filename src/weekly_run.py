@@ -26,10 +26,12 @@ from sqlalchemy import Engine, and_, func, select
 from sqlalchemy.orm import Session
 
 from agents.pipeline import run_agent_pipeline
+from baselines import run_spy_benchmark
 from config import load_config
 from db.models import (
     PORTFOLIO_BACKTEST_EQUAL_WEIGHT,
     PORTFOLIO_BACKTEST_NO_LLM,
+    PORTFOLIO_BACKTEST_SPY,
     PORTFOLIO_LIVE,
     Position,
     Price,
@@ -228,6 +230,10 @@ def run_weekly(
 
     # ── step 1: ingest ────────────────────────────────────────────────────
     _ingest_fresh_data(date_obj, mode, db_engine)
+
+    # ── SPY buy-and-hold benchmark: handles all remaining steps internally ─
+    if portfolio_id == PORTFOLIO_BACKTEST_SPY:
+        return run_spy_benchmark(date_str, db_engine, mode=mode, portfolio_id=portfolio_id)
 
     # ── step 2: agent pipeline ────────────────────────────────────────────
     # Baseline portfolios (no-LLM, equal-weight) skip the agent pipeline entirely.
