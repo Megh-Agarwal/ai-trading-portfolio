@@ -4,6 +4,43 @@ Each entry: date, context, decision, consequences.
 
 ---
 
+## ADR-022 — News source selection for historical backfill: GDELT adopted after Finnhub and Alpha Vantage ruled out
+
+**Date:** 2026-06-24
+
+**Context:** M5 backtesting requires news sentiment signals for each of the 99 rebalance dates from 2024-07-05 → 2026-06-12. Three data sources were evaluated sequentially.
+
+**Finnhub (ruled out for backfill):** Confirmed twice that the free tier returns only the last ~5–7 days regardless of the `from`/`to` date parameters — a direct API test for NVDA with `from=2024-06-01&to=2024-07-01` returned articles dated 2026-06-13 to 2026-06-18 only. This is a hard API limit, not a bug. Finnhub is retained for weekly live refresh (`scripts/ingest_news.py --since-days 7`) where its real-time depth is sufficient.
+
+**Alpha Vantage (ruled out for backfill):** The `ingest_alpha_vantage_news.py` script was built and run, stopping after 40/100 tickers. Post-mortem revealed two compounding limits: (1) `limit=200` in the script is a dead zone — AV treats any value 51–999 identically to the default of 50; only `limit=1000` escapes it; (2) even at `limit=1000`, high-volume tickers (e.g. NVDA) exhaust 1000 articles in ~6.7 months sorted ascending, meaning 11 months of the 18-month backtest window would be uncovered. All 40 completed tickers have exactly 50 articles each in the DB. These rows are kept but unused (coverage only reaches 2024-12-04 for any ticker, and only 2026-01-16 for the backtest window start). The `ingest_alpha_vantage_news.py` script is marked abandoned; do not run it.
+
+**GDELT (adopted):** Google BigQuery public dataset `gdelt-bq.gdeltv2.gkg` contains GDELT 2.0 GKG, giving 13+ months of news with pre-computed tone scores for any company name. Key implementation decisions after prototyping:
+
+1. **Table choice:** Use `gdelt-bq.gdeltv2.gkg_partitioned`, not `gkg`. The unpartitioned `gkg` table causes full-table scans (~560 GB per query). The partitioned table with `_PARTITIONTIME >= TIMESTAMP(...)` and monthly chunking yields ~2.9 GB per ticker-month and enables partition pruning.
+
+2. **Org matching:** Must wrap `Organizations` and `V2Organizations` with `UPPER()` in the WHERE clause — without it, zero rows are returned for any company name. Match via full company names from `config/ticker_company_names.yaml` (not ticker symbols).
+
+3. **Apostrophe escaping:** BigQuery Standard SQL requires `\'`, not the ANSI `''` form. This silently broke queries for McDonald's (MCD) and Lowe's (LOW) until caught via a syntax error on resume.
+
+4. **Themes column excluded from SELECT:** Adding `ANY_VALUE(Themes)` to the SELECT triples scan cost from ~2.9 to ~7.4 GB/month per ticker (~96 GB per ticker for 13 months), with no usable signal — empirical testing showed `EPU_ECONOMY_HISTORIC` tagged ~70% of all articles including press releases. Wire service exclusion was applied unconditionally at the application layer instead, avoiding the Themes cost entirely.
+
+5. **Relevance filter:** Source-quality tiered allowlist (Tier 1: Reuters, Bloomberg, WSJ, FT, AP, NYT, WaPo, Economist, Barron's; Tier 2: CNBC, MarketWatch, Motley Fool, Benzinga, Seeking Alpha, Forbes, Fortune, Business Insider, and ~25 sector-specific outlets). Wire services (prnewswire, businesswire, globenewswire) are excluded — they are press releases, not journalism, and dominated the unfiltered top-ranked articles. Combined relevance score: `tier×2 + min(word_count/1000, 1.0) + min(|tone|/5.0, 1.0)`. Top 50 per ISO week per ticker retained; Tier 3 fallback if a week has fewer than 5 Tier 1+2 articles.
+
+6. **Content:** GKG has no article titles or body text — only URL, source domain, and pre-computed tone scores (V2Tone: comma-separated tone, positive%, negative%, ..., word_count). Synthetic title (`[GDELT/{source}] {ticker}: {direction} coverage (tone {n:+.1f})`) and summary (`tone {n:+.2f} | positive {p:.1f}% | negative {n:.1f}% | {w} words`) are stored in the existing `news_raw` columns. Option B (URL slug extraction) and C (direct tone aggregation bypassing LLM) were evaluated and rejected: URL slugs are absent on ~30% of articles, and bypassing the LLM would require a separate scoring pipeline inconsistent with the live path.
+
+**Total real cost:** ~$20.69 in BigQuery on-demand charges. 11 tickers processed before the Themes-column bug was discovered (~1.03 TiB scanned at ~$6.25/TiB). Remaining 89 tickers processed without Themes column (~3.36 TiB minus ~1 TiB free tier allowance). The bug was sunk cost; the data itself is still valid and was retained.
+
+**Coverage analysis (post-backfill, run 2026-06-24):** The backtest window 2024-07-05 → 2026-06-12 (102 weeks) has three distinct sub-periods:
+- **2024-07-05 → 2024-12-03 (22 weeks): 0% news coverage for all sectors.** No data source covers this window. The news agent will produce neutral zero-stub signals for these dates. The macro agent (400-day lookback, all FRED series present) will drive all signal during this period.
+- **2024-12-04 → 2025-06-05 (27 weeks): 63–100% per sector**, from AV's 40-ticker partial coverage (varies: XLB/XLE/XLP at 100%; XLK at 63%).
+- **2025-06-06 → 2026-06-12 (54 weeks): 96–100% per sector**, from GDELT full backfill (only 2 edge-of-window weeks missing for most sectors, due to the June 6 start date falling mid-week).
+
+**Consequences:** M5 backtester should treat the first 22 weeks (Jul–Nov 2024) as macro-only. The `run_weekly` pipeline handles empty news gracefully (neutral stubs, pipeline continues). For a news-attribution analysis, restrict to the GDELT window (2025-06-06 onward) where coverage is reliable. The 22-week blackout is not fixable without purchasing a commercial data source; it is acceptable for a research prototype. GDELT data stops at the backtest end date (2026-06-12); Finnhub takes over for all live dates going forward.
+
+**Selected M5 backtest window (authoritative):** `2025-06-13 → 2026-06-12`, **53 weekly rebalances**. Rationale: 2025-06-06 is the first Friday in the GDELT backfill; the news agent requires a 7-day lookback, so the earliest rebalance date with a complete lookback window is 2025-06-13 (7 days after 2025-06-06, also a Friday). The end date 2026-06-12 is the last Friday covered by the GDELT backfill. This window has 96–100% news coverage for every sector across all 53 dates — no macro-only or partial-coverage weeks. `config/backtest.yaml` is set to these dates. Do not use the earlier 2024-07-05 start date for M5; that window was correct for the broader data availability analysis but predates GDELT coverage.
+
+---
+
 ## ADR-021 — Turnover penalty recalibration from 0.10 → 0.002 (provisional)
 
 **Date:** 2026-06-21
