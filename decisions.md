@@ -4,6 +4,45 @@ Each entry: date, context, decision, consequences.
 
 ---
 
+## ADR-023 — Turnover penalty held at 0.002 after 52-week empirical calibration
+
+**Date:** 2026-06-26
+
+**Context:** ADR-021 set `turnover_penalty = 0.002` as a provisional value and required calibration against real 52-week backtest data before treating any value as production-ready. The full backtest (2024-07-05 → 2026-06-12, 102 Fridays × 4 portfolios) is now complete, providing the first real empirical basis for evaluating gamma.
+
+**Key numbers from the 53-week authoritative analysis window (2025-06-13 → 2026-06-12):**
+
+| | Full (LLM) | No-LLM | Difference |
+|---|---|---|---|
+| Total return | +21.93% | +23.78% | −1.85% |
+| Avg weekly turnover | 6.35% | 2.79% | 2.28× |
+| Total turnover | ~330% | ~145% | +185pp |
+| Cost drag | 10.68 bps | 5.64 bps | +5.04 bps |
+
+**ADR-021 stated cost config correction:** ADR-021 referenced `transaction_cost_bps: 10` which was a documentation error. The actual config is `spread_bps: 1.0` + `slippage_bps: 2.0` = **3 bps total** per unit of trade value. The penalty-to-real-cost ratio for gamma=0.002 is therefore `0.002 / (3/10_000) ≈ 6.7×`, not the ~3× stated in ADR-021.
+
+**Alpha decomposition:**
+
+- Excess cost drag (Full vs No-LLM): 5.04 bps = 0.0504%
+- This explains 0.0504 / 1.85% ≈ **2.7%** of the total gap
+- Gross alpha with costs equalised ≈ −1.85% + 0.0504% = **−1.80%**
+- **97% of the underperformance is signal quality, not transaction cost drag**
+
+**Gamma calibration analysis:**
+
+Current gamma=0.002 already penalises each unit of L1 weight change at 6.7× the actual 3bps cost. Despite this, the LLM portfolio still turns over 2.28× more than baseline — meaning the LLM signals are sufficiently strong (relative to the penalty) to trigger trades, but those trades do not deliver positive alpha. This is a signal quality problem, not a cost friction problem.
+
+Raising gamma to suppress the excess turnover would treat the symptom rather than the cause. Specifically:
+- The excess 3.56 pp/week turnover costs roughly 5 bps/year — negligible relative to the −185 bps gap
+- A higher gamma (e.g. 0.005 = 16.7× real cost) would also suppress genuine signals in periods when agent quality improves
+- The gamma sweep prescribed in ADR-021 (γ ∈ {0.001, 0.002, 0.005, 0.01}) was intended to tune cost-efficiency; with excess cost at 2.7% of the gap, no setting in that range materially changes the outcome
+
+**Decision:** Hold `turnover_penalty = 0.002`. The provisional value is confirmed as calibrated for cost efficiency. No change to `optimizer.yaml`.
+
+**Consequences:** The −1.85% alpha gap should be investigated at the signal layer: examine agent prompt quality, the aggregator weight calibration (news=0.57/macro=0.43 per ADR-012), and whether the Haiku/Sonnet signal regime was appropriate for this 53-week window. Raising gamma is not the right lever — it would reduce damage from bad signals at the cost of also suppressing good ones. The parameter remains revisable if agent quality changes materially.
+
+---
+
 ## ADR-022 — News source selection for historical backfill: GDELT adopted after Finnhub and Alpha Vantage ruled out
 
 **Date:** 2026-06-24

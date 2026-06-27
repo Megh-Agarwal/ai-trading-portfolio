@@ -115,7 +115,7 @@ def run_backtest(
                 week_cost = result.get("llm_cost_usd", 0.0)
                 total_cost += week_cost
                 logger.info(
-                    "  OK    portfolio=%-30s  cost=$%.5f  value=$%,.2f  cumulative_cost=$%.5f",
+                    "  OK    portfolio=%-30s  cost=$%.5f  value=$%.2f  cumulative_cost=$%.5f",
                     portfolio_id,
                     week_cost,
                     result.get("ending_portfolio_value", 0.0),

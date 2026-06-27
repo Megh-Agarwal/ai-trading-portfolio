@@ -84,19 +84,29 @@ def _load_sector_prices(
 ) -> pd.DataFrame:
     """Load adj_close for tickers on the given dates; return DataFrame(index=date_str, cols=ticker).
 
-    Missing (ticker, date) cells are NaN.
+    Forward-fills from the previous trading day for market holidays (e.g. July 4th)
+    that fall on a rebalance Friday. Queries a 7-day buffer before the first date
+    so forward-fill always has a prior value to draw from.
     """
+    if not dates:
+        return pd.DataFrame(index=[], columns=tickers)
+    buffer_start = min(dates) - datetime.timedelta(days=7)
     rows = session.execute(
         select(Price.date, Price.ticker, Price.adj_close)
         .where(Price.ticker.in_(tickers))
-        .where(Price.date.in_(dates))
+        .where(Price.date >= buffer_start)
+        .where(Price.date <= max(dates))
     ).all()
     df = pd.DataFrame(rows, columns=["date", "ticker", "adj_close"])
     if df.empty:
         return pd.DataFrame(index=[str(d) for d in dates], columns=tickers)
     pivot = df.pivot(index="date", columns="ticker", values="adj_close")
-    pivot.index = pivot.index.astype(str)
-    return pivot.reindex(index=[str(d) for d in dates], columns=tickers)
+    pivot.index = pd.to_datetime(pivot.index)
+    pivot = pivot.reindex(pd.date_range(buffer_start, max(dates), freq="D")).ffill()
+    result = pivot.reindex(pd.to_datetime(dates))
+    result.index = [str(d) for d in dates]
+    result.columns.name = None
+    return result.reindex(columns=tickers)
 
 
 def _corr_metrics(x: list[float], y: list[float]) -> dict:
