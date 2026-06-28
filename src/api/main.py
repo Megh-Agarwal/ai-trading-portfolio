@@ -22,6 +22,10 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from db.models import (
+    PORTFOLIO_BACKTEST_EQUAL_WEIGHT,
+    PORTFOLIO_BACKTEST_FULL,
+    PORTFOLIO_BACKTEST_NO_LLM,
+    PORTFOLIO_BACKTEST_SPY,
     PORTFOLIO_LIVE,
     PortfolioSnapshot,
     Position,
@@ -304,3 +308,27 @@ def get_health(engine: Engine = Depends(get_engine)) -> dict[str, Any]:
         "stale_threshold_days": _STALE_THRESHOLD_DAYS,
         "triggered_risk_events": triggered_risk,
     }
+
+
+@app.get("/backtest/nav")
+def get_backtest_nav(engine: Engine = Depends(get_engine)) -> dict[str, Any]:
+    """NAV history for all four backtest portfolios — used for the comparison chart."""
+    _PORTFOLIOS = {
+        "LLM (Full)": PORTFOLIO_BACKTEST_FULL,
+        "No LLM": PORTFOLIO_BACKTEST_NO_LLM,
+        "Equal Weight": PORTFOLIO_BACKTEST_EQUAL_WEIGHT,
+        "SPY": PORTFOLIO_BACKTEST_SPY,
+    }
+    result: dict[str, list[dict[str, Any]]] = {}
+    with Session(engine) as session:
+        for label, portfolio_id in _PORTFOLIOS.items():
+            rows = session.execute(
+                select(PortfolioSnapshot.date, PortfolioSnapshot.total_value)
+                .where(PortfolioSnapshot.portfolio_id == portfolio_id)
+                .order_by(PortfolioSnapshot.date)
+            ).all()
+            result[label] = [
+                {"date": row.date.isoformat(), "nav": round(row.total_value, 2)}
+                for row in rows
+            ]
+    return result
