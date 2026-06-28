@@ -61,11 +61,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Allow the Streamlit dashboard to call this API.
-# Update allow_origins to the specific *.streamlit.app URL once deployment is confirmed.
+# Allowed CORS origin is set via DASHBOARD_ORIGIN env var (configured in .env on EC2).
+# Falls back to "*" if unset so local dev and first-run still work.
+_CORS_ORIGINS = [o.strip() for o in os.environ.get("DASHBOARD_ORIGIN", "*").split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_CORS_ORIGINS,
     allow_methods=["GET"],
     allow_headers=["*"],
 )
