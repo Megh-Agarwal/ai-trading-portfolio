@@ -17,6 +17,7 @@ from db.models import (
     Base,
     PortfolioSnapshot,
     Position,
+    Price,
     RiskEvent,
     Signal,
     Trade,
@@ -59,6 +60,17 @@ def db_engine() -> Engine:
                 net_exposure=0.9997,
             ),
         ])
+        # Price for XLK so /portfolio can compute market_value
+        session.add(Price(
+            date=_TODAY,
+            ticker="XLK",
+            open=2083.33,
+            high=2083.33,
+            low=2083.33,
+            close=2083.33,
+            volume=1_000_000,
+            adj_close=2083.33,
+        ))
         # Positions for latest date
         session.add_all([
             Position(
@@ -175,6 +187,14 @@ def test_portfolio_weights_sum_to_one_approx(client: TestClient) -> None:
     total_weight = sum(p["weight"] for p in positions)
     # XLK is ~25% of NAV; cash is excluded; so weight < 1 is expected
     assert 0.0 < total_weight <= 1.0
+
+
+def test_portfolio_market_value_computed_from_price(client: TestClient) -> None:
+    r = client.get("/portfolio")
+    xlk = next(p for p in r.json()["positions"] if p["ticker"] == "XLK")
+    # 120 shares × $2083.33 adj_close
+    assert xlk["market_value"] > 0.0
+    assert abs(xlk["market_value"] - 120.0 * 2083.33) < 1.0
 
 
 def test_portfolio_empty_db_returns_404() -> None:

@@ -24,6 +24,7 @@ from db.models import (
     PORTFOLIO_LIVE,
     PortfolioSnapshot,
     Position,
+    Price,
     RiskEvent,
     Signal,
     Trade,
@@ -97,13 +98,30 @@ def get_portfolio(engine: Engine = Depends(get_engine)) -> dict[str, Any]:
             .order_by(Position.ticker)
         ).scalars().all()
 
+        # Fetch the most recent price on or before latest_date for each ticker.
+        # positions.market_value is always 0 (write_positions design); compute here.
+        tickers = [p.ticker for p in positions if p.ticker != "CASH"]
+        prices: dict[str, float] = {}
+        for ticker in tickers:
+            price_row = session.execute(
+                select(Price.adj_close)
+                .where(Price.ticker == ticker)
+                .where(Price.date <= latest_date)
+                .order_by(Price.date.desc())
+                .limit(1)
+            ).scalar()
+            if price_row is not None:
+                prices[ticker] = float(price_row)
+
     total_value = snapshot.total_value
     position_list = [
         {
             "ticker": p.ticker,
             "shares": round(p.shares, 4),
-            "market_value": round(p.market_value, 2),
-            "weight": round(p.market_value / total_value, 4) if total_value > 0 else 0.0,
+            "market_value": round(p.shares * prices.get(p.ticker, 0.0), 2),
+            "weight": round(
+                p.shares * prices.get(p.ticker, 0.0) / total_value, 4
+            ) if total_value > 0 else 0.0,
         }
         for p in positions
         if p.ticker != "CASH"
