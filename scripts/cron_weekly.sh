@@ -54,7 +54,6 @@ if [[ $EXIT_CODE -ne 0 ]]; then
     uv run python - <<'PYEOF' 2>&1 | tee -a "$LOG_FILE" || true
 import os, sys
 sys.path.insert(0, 'src')
-from dotenv import load_dotenv; load_dotenv()
 from infra.s3_backup import upload_weekly_snapshot
 date = os.environ['DATE']
 log_file = os.environ['LOG_FILE']
