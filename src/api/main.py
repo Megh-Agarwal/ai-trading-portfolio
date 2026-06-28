@@ -30,7 +30,12 @@ from db.models import (
 )
 from eval.metrics import compute_all_metrics
 
-_DB_PATH = Path(os.environ.get("DB_PATH", "data/state.db"))
+_DB_PATH = Path(
+    os.environ.get(
+        "DB_PATH",
+        str(Path(__file__).parent.parent.parent / "data" / "state.db"),
+    )
+)
 _STALE_THRESHOLD_DAYS = 8  # rebalance runs weekly; >8 days means a missed run
 
 _engine: Engine | None = None
