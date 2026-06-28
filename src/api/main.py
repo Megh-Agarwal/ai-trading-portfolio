@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -58,6 +59,15 @@ app = FastAPI(
     description="Read-only API for live portfolio state and performance.",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# Allow the Streamlit dashboard to call this API.
+# Update allow_origins to the specific *.streamlit.app URL once deployment is confirmed.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
 )
 
 
