@@ -2,7 +2,9 @@
 
 > A multi-agent LLM signal generation system that produces weekly portfolio rebalances for a universe of 10 US sector ETFs. Three specialized agents (news sentiment, macro regime, prediction-market events) generate views that feed a Black-Litterman optimizer with realistic constraints and transaction cost modeling. Paper-traded live on AWS; backtested rigorously before live deployment.
 
-![Status](https://img.shields.io/badge/status-work%20in%20progress-yellow)
+![Status](https://img.shields.io/badge/status-live-brightgreen)
+
+**This system runs live and unattended every week on AWS.** → [View the live dashboard](https://megh-agarwal-portfolio-dashboard.hf.space)
 
 ---
 
@@ -64,7 +66,7 @@ uv run python scripts/init_db.py
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) |
 | `FRED_API_KEY` | [fred.stlouisfed.org/docs/api](https://fred.stlouisfed.org/docs/api/api_key.html) |
 | `FINNHUB_API_KEY` | [finnhub.io/dashboard](https://finnhub.io/dashboard) |
-| `ALPHA_VANTAGE_API_KEY` | [alphavantage.co](https://www.alphavantage.co/support/#api-key) — primary historical news source |
+| `GCP_PROJECT_ID` + `GOOGLE_APPLICATION_CREDENTIALS` | GCP service account with BigQuery read access — used for GDELT news backfill |
 
 ---
 
@@ -102,20 +104,30 @@ See [`decisions.md`](decisions.md) for all architectural decision records (ADRs)
 
 ## Results
 
-_Placeholder — backtest and paper-trading results will be added after Milestone 5._
+53-week out-of-sample backtest (2025-06-13 → 2026-06-12), four portfolios run in parallel:
+
+| Portfolio | Total Return | Notes |
+|---|---|---|
+| LLM (Full) | +21.93% | All three agents active |
+| No-LLM | +23.78% | BL prior only, no agent views |
+| Equal Weight | — | 1/N baseline |
+| SPY | — | Passive benchmark |
+
+The −1.85% LLM alpha gap is attributable to signal quality (97%) rather than transaction costs (3%). Macro regime modulation is the primary underperformer — the next research iteration addresses this. See `decisions.md` for the full analysis (ADR-022, ADR-023).
+
+Live paper trading started 2026-06-28. Results update automatically every Sunday.
 
 ---
 
 ## Roadmap
 
-- [x] M0: Project scaffolding
-- [ ] M1: Foundation & data layer
-- [ ] M2: Agent layer
-- [ ] M3: Portfolio optimization & risk
-- [ ] M4: Paper trading & execution
-- [ ] M5: Backtesting engine
-- [ ] M6: AWS deployment
-- [ ] M7: Results & write-up
+- [x] M1: Foundation & data layer
+- [x] M2: Agent layer
+- [x] M3: Portfolio optimization & risk
+- [x] M4: Paper trading & execution
+- [x] M5: Backtesting engine (102 weeks × 4 portfolios, $4.61 total LLM cost)
+- [x] M6: AWS deployment (EC2 + cron + API + public dashboard)
+- [ ] M7: Signal quality improvements & write-up
 
 ---
 
