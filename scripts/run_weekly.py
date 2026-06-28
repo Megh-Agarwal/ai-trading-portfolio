@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import io
 import json
 import logging
 import sys
@@ -27,6 +28,7 @@ load_dotenv()
 from sqlalchemy import create_engine  # noqa: E402
 
 from db.init import init_db  # noqa: E402
+from infra.s3_backup import upload_weekly_snapshot  # noqa: E402
 from weekly_run import run_weekly  # noqa: E402
 
 logging.basicConfig(
@@ -75,6 +77,17 @@ def main() -> None:
     init_db(db_path)
     db_engine = create_engine(f"sqlite:///{db_path}")
 
+    # Capture log output for S3 upload alongside the existing stdout handler
+    log_buffer = io.StringIO()
+    log_capture = logging.StreamHandler(log_buffer)
+    log_capture.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s — %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S",
+        )
+    )
+    logging.getLogger().addHandler(log_capture)
+
     try:
         result = run_weekly(
             date_str=date_str,
@@ -83,6 +96,18 @@ def main() -> None:
             force=args.force,
         )
         print(json.dumps(result, indent=2, default=str))
+
+        try:
+            upload_weekly_snapshot(
+                date=date_str,
+                db_path=db_path,
+                log_text=log_buffer.getvalue(),
+                summary_dict=result,
+            )
+        except Exception:
+            # S3 failure must never abort a successful rebalance
+            logger.error("S3 backup failed (non-fatal)\n%s", traceback.format_exc())
+
         sys.exit(0)
     except Exception:
         # Full traceback to stdout so CloudWatch captures it alongside normal logs
@@ -90,6 +115,8 @@ def main() -> None:
         print(traceback.format_exc())
         sys.exit(1)
     finally:
+        logging.getLogger().removeHandler(log_capture)
+        log_buffer.close()
         db_engine.dispose()
 
 
