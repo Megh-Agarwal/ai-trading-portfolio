@@ -32,7 +32,9 @@ from db.models import (
     Price,
     RiskEvent,
     Signal,
+    TargetWeight,
     Trade,
+    View,
 )
 from eval.metrics import compute_all_metrics
 
@@ -332,3 +334,69 @@ def get_backtest_nav(engine: Engine = Depends(get_engine)) -> dict[str, Any]:
                 for row in rows
             ]
     return result
+
+
+@app.get("/backtest/signals")
+def get_backtest_signals(engine: Engine = Depends(get_engine)) -> dict[str, Any]:
+    """All agent signals (sentiment, macro, events) for the full backtest — for heatmaps."""
+    with Session(engine) as session:
+        rows = session.execute(
+            select(Signal.date, Signal.agent_name, Signal.target, Signal.signal_value, Signal.confidence)
+            .where(Signal.portfolio_id == PORTFOLIO_BACKTEST_FULL)
+            .order_by(Signal.date, Signal.agent_name, Signal.target)
+        ).all()
+    return {
+        "signals": [
+            {
+                "date": row.date.isoformat(),
+                "agent": row.agent_name,
+                "target": row.target,
+                "value": round(row.signal_value, 4),
+                "conviction": round(float(row.confidence), 4) if row.confidence is not None else None,
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.get("/backtest/views")
+def get_backtest_views(engine: Engine = Depends(get_engine)) -> dict[str, Any]:
+    """Black-Litterman Q vector (expected excess returns) per sector per week."""
+    with Session(engine) as session:
+        rows = session.execute(
+            select(View.date, View.sector, View.expected_return, View.confidence)
+            .where(View.portfolio_id == PORTFOLIO_BACKTEST_FULL)
+            .order_by(View.date, View.sector)
+        ).all()
+    return {
+        "views": [
+            {
+                "date": row.date.isoformat(),
+                "sector": row.sector,
+                "expected_return": round(row.expected_return * 100, 4),  # convert to %
+                "conviction": round(float(row.confidence), 4) if row.confidence is not None else None,
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.get("/backtest/weights")
+def get_backtest_weights(engine: Engine = Depends(get_engine)) -> dict[str, Any]:
+    """Target weight history for the full LLM backtest portfolio."""
+    with Session(engine) as session:
+        rows = session.execute(
+            select(TargetWeight.date, TargetWeight.sector, TargetWeight.weight)
+            .where(TargetWeight.portfolio_id == PORTFOLIO_BACKTEST_FULL)
+            .order_by(TargetWeight.date, TargetWeight.sector)
+        ).all()
+    return {
+        "weights": [
+            {
+                "date": row.date.isoformat(),
+                "sector": row.sector,
+                "weight": round(row.weight, 4),
+            }
+            for row in rows
+        ]
+    }
