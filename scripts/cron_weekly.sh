@@ -10,6 +10,9 @@
 
 set -uo pipefail
 
+# cron runs with a minimal PATH that excludes ~/.local/bin where uv is installed
+export PATH="/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
 REPO=/home/ubuntu/ai-trading-portfolio
 LOG_DIR=$REPO/data/logs
 DATE=$(date +%Y-%m-%d)
